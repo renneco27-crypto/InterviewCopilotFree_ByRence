@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Tone Calibration System</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.4/dexie.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .instructions {
+            background: #f0f4ff;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 8px;
+        }
+
+        .instructions h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .instructions ol {
+            margin-left: 20px;
+            line-height: 1.8;
+            color: #333;
+        }
+
+        .calibration-section {
+            margin-bottom: 40px;
+        }
+
+        .emotion-card {
+            background: #f8f9fa;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .emotion-card.recording {
+            border-color: #ff6b6b;
+            background: #fff5f5;
+        }
+
+        .emotion-card.recorded {
+            border-color: #51cf66;
+            background: #f1fce4;
+        }
+
+        .emotion-card h3 {
+            color: #333;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .emotion-label {
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .emotion-label.nervous {
+            background: #ff922b;
+        }
+
+        .emotion-label.excited {
+            background: #f03e3e;
+        }
+
+        .emotion-label.neutral {
+            background: #5c7cfa;
+        }
+
+        .emotion-label.uncertain {
+            background: #9c36b5;
+        }
+
+        .prompt-text {
+            background: white;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            border-left: 3px solid #667eea;
+            color: #555;
+            font-style: italic;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .btn-record {
+            background: #ff6b6b;
+            color: white;
+        }
+
+        .btn-record:hover {
+            background: #ff5252;
+            transform: translateY(-2px);
+        }
+
+        .btn-record:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-stop {
+            background: #ff8787;
+            color: white;
+        }
+
+        .btn-stop:hover {
+            background: #ff6b6b;
+            transform: translateY(-2px);
+        }
+
+        .btn-play {
+            background: #51cf66;
+            color: white;
+        }
+
+        .btn-play:hover {
+            background: #40c057;
+            transform: translateY(-2px);
+        }
+
+        .btn-delete {
+            background: #ffa8a8;
+            color: white;
+        }
+
+        .btn-delete:hover {
+            background: #ff8787;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+            padding: 12px 30px;
+            font-size: 16px;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-download {
+            background: #51cf66;
+            color: white;
+            padding: 12px 30px;
+            font-size: 16px;
+        }
+
+        .btn-download:hover {
+            background: #40c057;
+            transform: translateY(-2px);
+        }
+
+        .recording-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: 10px;
+            color: #ff6b6b;
+        }
+
+        .recording-dot {
+            width: 8px;
+            height: 8px;
+            background: #ff6b6b;
+            border-radius: 50%;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .timer {
+            font-weight: 600;
+            color: #667eea;
+            font-size: 16px;
+            min-width: 50px;
+        }
+
+        .status-message {
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .status-message.show {
+            display: block;
+        }
+
+        .status-message.success {
+            background: #d3f9d8;
+            color: #2f9e44;
+            border: 1px solid #51cf66;
+        }
+
+        .status-message.error {
+            background: #ffe0e0;
+            color: #c92a2a;
+            border: 1px solid #ff8787;
+        }
+
+        .audio-visualizer {
+            display: flex;
+            align-items: flex-end;
+            gap: 4px;
+            height: 40px;
+            margin: 10px 0;
+        }
+
+        .bar {
+            flex: 1;
+            background: linear-gradient(to top, #667eea, #764ba2);
+            border-radius: 2px;
+        }
+
+        .features-display {
+            background: #f0f4ff;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 10px;
+            font-size: 13px;
+            font-family: 'Courier New', monospace;
+            max-height: 150px;
+            overflow-y: auto;
+            color: #333;
+        }
+
+        .feature-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .feature-row:last-child {
+            border-bottom: none;
+        }
+
+        .feature-label {
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        .feature-value {
+            color: #555;
+        }
+
+        .summary-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 30px;
+        }
+
+        .summary-section h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .summary-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .summary-card.recorded {
+            border-left-color: #51cf66;
+        }
+
+        .summary-card h4 {
+            color: #667eea;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .summary-card p {
+            color: #666;
+            font-size: 13px;
+            margin-bottom: 5px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(to right, #667eea, #764ba2);
+            transition: width 0.3s ease;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                border-radius: 0;
+            }
+
+            .content {
+                padding: 20px;
+            }
+
+            .header {
+                padding: 20px;
+            }
+
+            .header h1 {
+                font-size: 22px;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            button {
+                width: 100%;
+            }
+
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎙️ Voice Tone Calibration System</h1>
+            <p>Record yourself in different emotional states to create your tonal baseline</p>
+        </div>
+
+        <div class="content">
+            <div class="instructions">
+                <h3>📋 How It Works</h3>
+                <ol>
+                    <li>Record yourself saying each prompt in the specified emotional state</li>
+                    <li>The system will extract tonal features (pitch, pace, loudness, etc.)</li>
+                    <li>Your baseline will be saved and exported to CSV</li>
+                    <li>Download and share the CSV with the interview prep system</li>
+                </ol>
+            </div>
+
+            <div id="statusMessage" class="status-message"></div>
+
+            <div class="calibration-section">
+                <h2>Step 1: Calibration Recordings</h2>
+                <p style="color: #666; margin-bottom: 20px;">Record 30-60 seconds for each emotional state</p>
+
+                <!-- CONFIDENT -->
+                <div class="emotion-card" id="card-confident">
+                    <h3>
+                        <span class="emotion-label">CONFIDENT</span>
+                        <span id="status-confident">⭕ Not Recorded</span>
+                    </h3>
+                    <div class="prompt-text">
+                        "I led a team of 5 engineers and delivered a critical project 2 weeks ahead of schedule. I'm very confident in my leadership abilities."
+                    </div>
+                    <div class="button-group">
+                        <button class="btn-record" onclick="startRecording('confident')">🎙️ Record</button>
+                        <button class="btn-stop hidden" id="stop-confident" onclick="stopRecording('confident')">⏹️ Stop</button>
+                        <button class="btn-play" id="play-confident" onclick="playRecording('confident')" disabled>▶️ Play</button>
+                        <button class="btn-delete" id="delete-confident" onclick="deleteRecording('confident')" disabled>🗑️ Delete</button>
+                        <span class="timer hidden" id="timer-confident">0s</span>
+                    </div>
+                    <div class="audio-visualizer hidden" id="visualizer-confident"></div>
+                    <div class="features-display hidden" id="features-confident"></div>
+                </div>
+
+                <!-- NERVOUS -->
+                <div class="emotion-card" id="card-nervous">
+                    <h3>
+                        <span class="emotion-label nervous">NERVOUS</span>
+                        <span id="status-nervous">⭕ Not Recorded</span>
+                    </h3>
+                    <div class="prompt-text">
+                        "Um, I think I worked on... yeah, I did some projects with like, Python and stuff. I'm not entirely sure if I did everything perfectly though."
+                    </div>
+                    <div class="button-group">
+                        <button class="btn-record" onclick="startRecording('nervous')">🎙️ Record</button>
+                        <button class="btn-stop hidden" id="stop-nervous" onclick="stopRecording('nervous')">⏹️ Stop</button>
+                        <button class="btn-play" id="play-nervous" onclick="playRecording('nervous')" disabled>▶️ Play</button>
+                        <button class="btn-delete" id="delete-nervous" onclick="deleteRecording('nervous')" disabled>🗑️ Delete</button>
+                        <span class="timer hidden" id="timer-nervous">0s</span>
+                    </div>
+                    <div class="audio-visualizer hidden" id="visualizer-nervous"></div>
+                    <div class="features-display hidden" id="features-nervous"></div>
+                </div>
+
+                <!-- NEUTRAL -->
+                <div class="emotion-card" id="card-neutral">
+                    <h3>
+                        <span class="emotion-label neutral">NEUTRAL</span>
+                        <span id="status-neutral">⭕ Not Recorded</span>
+                    </h3>
+                    <div class="prompt-text">
+                        "The project involved developing a web application using React and Node.js. We completed it within the allocated timeline and budget."
+                    </div>
+                    <div class="button-group">
+                        <button class="btn-record" onclick="startRecording('neutral')">🎙️ Record</button>
+                        <button class="btn-stop hidden" id="stop-neutral" onclick="stopRecording('neutral')">⏹️ Stop</button>
+                        <button class="btn-play" id="play-neutral" onclick="playRecording('neutral')" disabled>▶️ Play</button>
+                        <button class="btn-delete" id="delete-neutral" onclick="deleteRecording('neutral')" disabled>🗑️ Delete</button>
+                        <span class="timer hidden" id="timer-neutral">0s</span>
+                    </div>
+                    <div class="audio-visualizer hidden" id="visualizer-neutral"></div>
+                    <div class="features-display hidden" id="features-neutral"></div>
+                </div>
+
+                <!-- EXCITED -->
+                <div class="emotion-card" id="card-excited">
+                    <h3>
+                        <span class="emotion-label excited">EXCITED</span>
+                        <span id="status-excited">⭕ Not Recorded</span>
+                    </h3>
+                    <div class="prompt-text">
+                        "This is so exciting! I absolutely love working on machine learning projects! The whole experience has been amazing and I learned so much!"
+                    </div>
+                    <div class="button-group">
+                        <button class="btn-record" onclick="startRecording('excited')">🎙️ Record</button>
+                        <button class="btn-stop hidden" id="stop-excited" onclick="stopRecording('excited')">⏹️ Stop</button>
+                        <button class="btn-play" id="play-excited" onclick="playRecording('excited')" disabled>▶️ Play</button>
+                        <button class="btn-delete" id="delete-excited" onclick="deleteRecording('excited')" disabled>🗑️ Delete</button>
+                        <span class="timer hidden" id="timer-excited">0s</span>
+                    </div>
+                    <div class="audio-visualizer hidden" id="visualizer-excited"></div>
+                    <div class="features-display hidden" id="features-excited"></div>
+                </div>
+
+                <!-- UNCERTAIN -->
+                <div class="emotion-card" id="card-uncertain">
+                    <h3>
+                        <span class="emotion-label">UNCERTAIN</span>
+                        <span id="status-uncertain">⭕ Not Recorded</span>
+                    </h3>
+                    <div class="prompt-text">
+                        "I'm not sure about the exact details, but I think there were some challenges with the API integration. Maybe we could have done it differently?"
+                    </div>
+                    <div class="button-group">
+                        <button class="btn-record" onclick="startRecording('uncertain')">🎙️ Record</button>
+                        <button class="btn-stop hidden" id="stop-uncertain" onclick="stopRecording('uncertain')">⏹️ Stop</button>
+                        <button class="btn-play" id="play-uncertain" onclick="playRecording('uncertain')" disabled>▶️ Play</button>
+                        <button class="btn-delete" id="delete-uncertain" onclick="deleteRecording('uncertain')" disabled>🗑️ Delete</button>
+                        <span class="timer hidden" id="timer-uncertain">0s</span>
+                    </div>
+                    <div class="audio-visualizer hidden" id="visualizer-uncertain"></div>
+                    <div class="features-display hidden" id="features-uncertain"></div>
+                </div>
+
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressBar" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <!-- SUMMARY -->
+            <div class="summary-section">
+                <h3>📊 Calibration Summary</h3>
+                <div class="summary-grid" id="summaryGrid">
+                    <div class="summary-card">
+                        <h4>Confident</h4>
+                        <p id="summary-confident">Not recorded yet</p>
+                    </div>
+                    <div class="summary-card">
+                        <h4>Nervous</h4>
+                        <p id="summary-nervous">Not recorded yet</p>
+                    </div>
+                    <div class="summary-card">
+                        <h4>Neutral</h4>
+                        <p id="summary-neutral">Not recorded yet</p>
+                    </div>
+                    <div class="summary-card">
+                        <h4>Excited</h4>
+                        <p id="summary-excited">Not recorded yet</p>
+                    </div>
+                    <div class="summary-card">
+                        <h4>Uncertain</h4>
+                        <p id="summary-uncertain">Not recorded yet</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ACTIONS -->
+            <div class="actions">
+                <button class="btn-download" id="exportBtn" onclick="exportToCSV()" disabled>📥 Export to CSV</button>
+                <button class="btn-primary" onclick="resetAll()">🔄 Reset All</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/wavesurfer.js/6.3.0/wavesurfer.min.js"></script>
+    <script>
+        let mediaRecorder;
+        let audioContext;
+        let analyser;
+        let animationId;
+        let recordingState = {};
+        const emotions = ['confident', 'nervous', 'neutral', 'excited', 'uncertain'];
+        const recordings = {};
+        let timers = {};
+
+        // Initialize
+        emotions.forEach(emotion => {
+            recordingState[emotion] = { recording: false, duration: 0 };
+            recordings[emotion] = null;
+        });
+
+        async function initAudio() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioContext.createMediaStreamAudioDestination();
+                analyser = audioContext.createAnalyser();
+                
+                stream.getTracks().forEach(track => {
+                    const source = audioContext.createMediaStreamSource(track);
+                    source.connect(analyser);
+                });
+
+                return stream;
+            } catch (error) {
+                showStatus('Error accessing microphone: ' + error.message, 'error');
+                return null;
+            }
+        }
+
+        async function startRecording(emotion) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                recordingState[emotion].recording = true;
+                recordingState[emotion].duration = 0;
+
+                // UI Updates
+                document.getElementById(`card-${emotion}`).classList.add('recording');
+                document.querySelector(`#stop-${emotion}`).classList.remove('hidden');
+                document.querySelector(`button[onclick="startRecording('${emotion}')"]`).disabled = true;
+                document.querySelector(`#timer-${emotion}`).classList.remove('hidden');
+                document.querySelector(`#status-${emotion}`).textContent = '🔴 Recording...';
+
+                // Timer
+                timers[emotion] = setInterval(() => {
+                    recordingState[emotion].duration++;
+                    document.querySelector(`#timer-${emotion}`).textContent = recordingState[emotion].duration + 's';
+                }, 1000);
+
+                const chunks = [];
+                mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: 'audio/wav' });
+                    recordings[emotion] = blob;
+                    processRecording(emotion);
+                };
+
+                mediaRecorder.start();
+            } catch (error) {
+                showStatus('Error starting recording: ' + error.message, 'error');
+            }
+        }
+
+        function stopRecording(emotion) {
+            if (mediaRecorder && recordingState[emotion].recording) {
+                mediaRecorder.stop();
+                recordingState[emotion].recording = false;
+                clearInterval(timers[emotion]);
+
+                // UI Updates
+                document.getElementById(`card-${emotion}`).classList.remove('recording');
+                document.getElementById(`card-${emotion}`).classList.add('recorded');
+                document.querySelector(`#stop-${emotion}`).classList.add('hidden');
+                document.querySelector(`button[onclick="startRecording('${emotion}')"]`).disabled = false;
+                document.querySelector(`#timer-${emotion}`).classList.add('hidden');
+                document.querySelector(`#status-${emotion}`).textContent = '✅ Recorded';
+
+                // Enable play/delete buttons
+                document.querySelector(`#play-${emotion}`).disabled = false;
+                document.querySelector(`#delete-${emotion}`).disabled = false;
+
+                updateProgress();
+                showStatus(`${emotion.charAt(0).toUpperCase() + emotion.slice(1)} recording saved!`, 'success');
+            }
+        }
+
+        async function processRecording(emotion) {
+            try {
+                const arrayBuffer = await recordings[emotion].arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                
+                // Extract features
+                const features = await extractAudioFeatures(audioBuffer);
+                
+                // Display features
+                displayFeatures(emotion, features);
+                updateSummary(emotion, features);
+            } catch (error) {
+                console.error('Error processing recording:', error);
+            }
+        }
+
+        async function extractAudioFeatures(audioBuffer) {
+            const rawData = audioBuffer.getChannelData(0);
+            
+            // Calculate basic features
+            let sum = 0;
+            let max = 0;
+            let min = Infinity;
+            
+            for (let i = 0; i < rawData.length; i++) {
+                const val = rawData[i];
+                sum += val * val;
+                if (val > max) max = val;
+                if (val < min) min = val;
+            }
+
+            const rms = Math.sqrt(sum / rawData.length);
+            const loudness = 20 * Math.log10(rms);
+            
+            // Simple pitch estimation using autocorrelation
+            const pitch = estimatePitch(rawData, audioBuffer.sampleRate);
+            
+            // Calculate speaking rate (zero crossings)
+            let zeroCrossings = 0;
+            for (let i = 1; i < rawData.length; i++) {
+                if ((rawData[i] >= 0 && rawData[i - 1] < 0) || (rawData[i] < 0 && rawData[i - 1] >= 0)) {
+                    zeroCrossings++;
+                }
+            }
+            const speakingRate = zeroCrossings / (audioBuffer.duration / 1000);
+            
+            // MFCC-like feature (frequency distribution)
+            const freqFeature = analyzeFrequency(rawData);
+
+            return {
+                loudness: Math.max(-60, Math.min(0, loudness)).toFixed(2),
+                pitch: pitch.toFixed(1),
+                speakingRate: speakingRate.toFixed(1),
+                zeroCross: zeroCrossings.toString(),
+                dynamicRange: (max - min).toFixed(4),
+                frequencyEnergy: freqFeature.toFixed(4),
+                duration: audioBuffer.duration.toFixed(2),
+                sampleRate: audioBuffer.sampleRate.toString()
+            };
+        }
+
+        function estimatePitch(data, sampleRate) {
+            const minPeriod = Math.floor(sampleRate / 400);
+            const maxPeriod = Math.floor(sampleRate / 50);
+            let maxCorrelation = 0;
+            let pitchPeriod = 0;
+
+            for (let period = minPeriod; period < maxPeriod; period++) {
+                let correlation = 0;
+                for (let i = 0; i < data.length - period; i++) {
+                    correlation += Math.abs(data[i] * data[i + period]);
+                }
+                if (correlation > maxCorrelation) {
+                    maxCorrelation = correlation;
+                    pitchPeriod = period;
+                }
+            }
+
+            const pitch = pitchPeriod > 0 ? sampleRate / pitchPeriod : 0;
+            return Math.max(50, Math.min(300, pitch));
+        }
+
+        function analyzeFrequency(data) {
+            let energy = 0;
+            for (let i = 0; i < data.length; i++) {
+                energy += data[i] * data[i];
+            }
+            return Math.sqrt(energy / data.length);
+        }
+
+        function displayFeatures(emotion, features) {
+            const container = document.querySelector(`#features-${emotion}`);
+            container.classList.remove('hidden');
+            
+            let html = '';
+            for (const [key, value] of Object.entries(features)) {
+                html += `<div class="feature-row">
+                    <span class="feature-label">${key}:</span>
+                    <span class="feature-value">${value}</span>
+                </div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        function updateSummary(emotion, features) {
+            const summary = document.querySelector(`#summary-${emotion}`);
+            summary.innerHTML = `
+                <strong>Loudness:</strong> ${features.loudness} dB<br>
+                <strong>Pitch:</strong> ${features.pitch} Hz<br>
+                <strong>Speaking Rate:</strong> ${features.speakingRate} ZC/s
+            `;
+            document.querySelector(`#summary-${emotion}`).parentElement.classList.add('recorded');
+        }
+
+        function playRecording(emotion) {
+            if (recordings[emotion]) {
+                const url = URL.createObjectURL(recordings[emotion]);
+                const audio = new Audio(url);
+                audio.play();
+            }
+        }
+
+        function deleteRecording(emotion) {
+            recordings[emotion] = null;
+            recordingState[emotion] = { recording: false, duration: 0 };
+            
+            document.getElementById(`card-${emotion}`).classList.remove('recorded');
+            document.querySelector(`#status-${emotion}`).textContent = '⭕ Not Recorded';
+            document.querySelector(`#play-${emotion}`).disabled = true;
+            document.querySelector(`#delete-${emotion}`).disabled = true;
+            document.querySelector(`#features-${emotion}`).classList.add('hidden');
+            document.querySelector(`#summary-${emotion}`).innerHTML = 'Not recorded yet';
+            document.querySelector(`#summary-${emotion}`).parentElement.classList.remove('recorded');
+            
+            updateProgress();
+        }
+
+        function updateProgress() {
+            const recorded = emotions.filter(e => recordings[e] !== null).length;
+            const progress = (recorded / emotions.length) * 100;
+            document.getElementById('progressBar').style.width = progress + '%';
+
+            if (recorded === emotions.length) {
+                document.getElementById('exportBtn').disabled = false;
+                showStatus('All recordings complete! Ready to export.', 'success');
+            }
+        }
+
+        function exportToCSV() {
+            if (emotions.some(e => recordings[e] === null)) {
+                showStatus('Please record all emotions before exporting', 'error');
+                return;
+            }
+
+            let csv = 'Emotion,Loudness (dB),Pitch (Hz),Speaking Rate (ZC/s),Dynamic Range,Frequency Energy,Duration (s),Sample Rate\n';
+            
+            emotions.forEach(emotion => {
+                const features = document.querySelector(`#features-${emotion}`).innerText;
+                const lines = features.split('\n');
+                
+                let featureObj = {};
+                lines.forEach(line => {
+                    const [key, value] = line.split(':').map(s => s.trim());
+                    if (key) featureObj[key] = value;
+                });
+
+                csv += `${emotion.toUpperCase()},${featureObj.loudness || ''},${featureObj.pitch || ''},${featureObj.speakingRate || ''},${featureObj['dynamicRange'] || ''},${featureObj['frequencyEnergy'] || ''},${featureObj.duration || ''},${featureObj['sampleRate'] || ''}\n`;
+            });
+
+            downloadCSV(csv);
+            showStatus('CSV exported successfully! Check your downloads.', 'success');
+        }
+
+        function downloadCSV(csv) {
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `voice_calibration_${new Date().getTime()}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        function resetAll() {
+            if (confirm('Are you sure you want to reset all recordings?')) {
+                emotions.forEach(emotion => deleteRecording(emotion));
+                document.getElementById('exportBtn').disabled = true;
+                showStatus('All recordings cleared', 'success');
+            }
+        }
+
+        function showStatus(message, type) {
+            const el = document.getElementById('statusMessage');
+            el.textContent = message;
+            el.className = `status-message show ${type}`;
+            setTimeout(() => el.classList.remove('show'), 4000);
+        }
+
+        // Initialize audio context on first interaction
+        document.addEventListener('click', () => {
+            if (!audioContext) {
+                initAudio().catch(console.error);
+            }
+        }, { once: true });
+    </script>
+</body>
+</html>
