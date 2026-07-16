@@ -13,6 +13,26 @@ Real-time interview assistant that runs as a transparent, always-on-top Electron
 - **Content protection** — Uses `BrowserWindow.setContentProtection()` to block screen capture
 - **Context management** — Save/load/delete context snippets and include them with AI queries
 
+## Relay Server Setup
+
+This project requires a connection to the **relaytest** repository to function correctly. 
+
+### 1. Hosting on Render
+The relay repository must be actively hosted on [Render](https://render.com/).
+
+* **Relay URL:** `yourwebsite.onrender.com`
+
+### 2. Environment Variables (`.env`)
+You must configure a shared secret key exchange to authenticate your local clients (like the Electron overlay or Edge phone) with the hosted relay server.
+
+Configure the identical `RELAY_SECRET` in **two places**:
+
+1. **Your Local `.env` File:**
+2. **OnRender Dashboard:**
+Under your service's **Environment Variables**, add:
+* `RELAY_SECRET` = `your-64-char-hex-secret-here`
+
+> 🔑 **Security Note:** The `RELAY_SECRET` must be a pre-agreed 256-bit, 64-character hex string (e.g., generated via `openssl rand -hex 32`). When clients connect to the relay via WebSocket (`wss://yourwebsite.onrender.com?role=electron&secret=...`), the server validates this incoming secret. If they match, the client is authenticated to send/receive transcripts; otherwise, the connection is rejected.
 ## Architecture
 
 ```
