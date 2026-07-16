@@ -38,6 +38,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Phone mic window (hidden BrowserWindow)
   startPhoneMic: () => ipcRenderer.invoke('start-phone-mic'),
   stopPhoneMic: () => ipcRenderer.invoke('stop-phone-mic'),
+
+  // Mic mute control
+  setMicMute: (muted) => ipcRenderer.invoke('set-mic-mute', muted),
+  getMicMute: ()       => ipcRenderer.invoke('get-mic-mute'),
+  onMicMuteChanged: (cb) => ipcRenderer.on('mic-mute-changed', (_e, muted) => cb(muted)),
+
+  // Global Alt+Z toggle mute (works even when overlay is unfocused)
+  onPushToMute: (cb) => ipcRenderer.on('push-to-mute', (_e, muted) => cb(muted)),
+
+  // Synchronous mute state read — use this to gate transcription on startup
+  // before any push-to-mute event has fired.
+  isMuted: () => ipcRenderer.invoke('get-mic-mute').then(r => r.muted),
 });
 
 console.log('✓ Electron API exposed to renderer');

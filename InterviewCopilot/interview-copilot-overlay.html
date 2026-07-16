@@ -185,32 +185,44 @@
 
     /* Live transcript */
     .live-transcript {
-      max-height: 0;
-      overflow: hidden;
-      transition: max-height 0.2s ease;
+      flex: 1;
+      overflow-y: auto;
       border-top: 1px solid rgba(255,255,255,0.06);
-      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
     }
     .live-transcript.active {
-      max-height: 150px;
       overflow-y: auto;
     }
     .live-transcript::-webkit-scrollbar { width: 3px; }
     .live-transcript::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+    
+    #liveEntries {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 16px;
+      overflow-y: auto;
+    }
+    
     .live-entry {
       display: flex;
-      gap: 6px;
-      padding: 3px 12px;
-      font-size: 12px;
-      line-height: 1.5;
-      color: #ccc;
-      border-bottom: 1px solid rgba(255,255,255,0.03);
+      gap: 10px;
+      padding: 12px 14px;
+      font-size: 16px;
+      line-height: 1.6;
+      color: #e0e0e0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: rgba(26, 26, 34, 0.3);
+      border-radius: 6px;
+      align-items: flex-start;
     }
-    .live-entry .t { font-size: 10px; color: #606068; flex-shrink: 0; min-width: 34px; padding-top: 2px; font-family: 'JetBrains Mono', monospace; }
-    .live-entry .s { font-weight: 600; flex-shrink: 0; }
-    .live-entry .s.i { color: #3b82f6; }
+    .live-entry .t { font-size: 11px; color: #606068; flex-shrink: 0; min-width: 50px; padding-top: 4px; font-family: 'JetBrains Mono', monospace; }
+    .live-entry .s { font-weight: 700; flex-shrink: 0; font-size: 12px; }
+    .live-entry .s.i { color: #76b900; }
     .live-entry .s.a { color: #76b900; }
-    .live-entry .x { flex: 1; word-break: break-word; }
+    .live-entry .x { flex: 1; word-break: break-word; font-size: 16px; }
     .live-interim { padding: 3px 12px 6px; font-size: 12px; color: #606068; font-style: italic; min-height: 18px; }
 
     /* ── Panel Overlay ── */
@@ -431,11 +443,11 @@
 
     .entry {
       display: flex;
-      gap: 8px;
-      padding: 6px 10px;
-      border-radius: 6px;
-      background: rgba(26, 26, 34, 0.6);
-      border: 1px solid rgba(255,255,255,0.04);
+      gap: 10px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      background: rgba(26, 26, 34, 0.4);
+      border: 1px solid rgba(255,255,255,0.06);
     }
     .entry-time {
       font-size: 10px;
@@ -447,15 +459,15 @@
     }
     .entry-content { flex: 1; display: flex; flex-direction: column; gap: 2px; }
     .entry-speaker {
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.05em;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
-      color: #6366f1;
+      color: #76b900;
     }
-    .entry.interviewer .entry-speaker { color: #3b82f6; }
+    .entry.interviewer .entry-speaker { color: #76b900; }
     .entry.ai-response .entry-speaker { color: #76b900; }
-    .entry-text { font-size: 12px; line-height: 1.6; color: #f0f0f0; word-break: break-word; }
+    .entry-text { font-size: 18px; line-height: 1.7; color: #f0f0f0; word-break: break-word; font-weight: 500; }
 
     #interim-line {
       padding: 6px 10px;
@@ -522,13 +534,9 @@
     <div class="transcript-bar" id="transcriptBar">
       <span id="transcriptText">Ready. Ctrl+M to paste+AI, Alt+R to record. Ctrl+Q/J/K/Y for panels.</span>
     </div>
+    <div id="mute-badge" style="display:none;color:#ef4444;font-weight:700;font-size:11px;text-align:center;padding:2px 0;background:rgba(239,68,68,0.15);flex-shrink:0;">🎤 MUTED (Alt+Z)</div>
 
-    <div class="ai-response-display" id="responseDisplay">
-      <div class="empty-state">
-        <p>Press Ctrl+M to paste from clipboard</p>
-        <p>AI response will appear here</p>
-      </div>
-    </div>
+
 
     <div class="live-transcript" id="liveTranscript">
       <div id="liveEntries"></div>
@@ -574,7 +582,7 @@
     <div class="panel-overlay" id="panelWave">
       <div class="panel-header">
         Voice Recording <span class="panel-hint">Ctrl+Y</span>
-        <button class="panel-close" onclick="closePanel()">✕</button>
+        <button class="panel-close" onclick="closePanel(); return false;">✕</button>
       </div>
       <div class="waveform" id="waveform">
         <div class="waveform-bar" id="wb1"></div>
@@ -673,12 +681,15 @@
     let isListening = false;
     let transcriptEntries = [];
 
-    const QUESTION_PATTERNS = [
-      /\b(what|why|how|who|where|when|which|can you|could you|would you|is there|are there|do you|did you|does|will)\b/i,
-      /\b(ano|bakit|paano|kailan|sino|nasaan|magkano|mayroon|meron|pwede|puwede|saan|ilang|ilan|mayroon ba|meron ba)\b/i,
-      /\b(unsa|ngano|giunsa|kanus-?a|kinsa|asa|pila|pwede ba|mahimo ba|nganong|duna|aduna)\b/i,
-      /\?$/
-    ];
+    function isInterviewPrompt(text) {
+      const t = text.trim();
+      if (t.length < 8) return false;
+      if (t.endsWith('?')) return true;
+      const openers = /^(tell|describe|walk|give|explain|sell|detail|outline|share|discuss|illustrate|analyze|narrate|recall|define|evaluate|clarify|summarize|identify|justify|talk|help me|can you|could you|what|why|how|when|where|who)\b/i;
+      if (openers.test(t)) return true;
+      if (t.length > 40 && /[.!]$/.test(t)) return true;
+      return false;
+    }
 
     // ─────────────────────────────────────────────────────────────────────
     // CONTENT PROTECTION
@@ -738,7 +749,7 @@
     }
 
     function isQuestion(text) {
-      return QUESTION_PATTERNS.some(p => p.test(text.trim()));
+      return isInterviewPrompt(text);
     }
 
     function escHtml(s) {
@@ -767,9 +778,8 @@
     }
 
     function displayResponse(speaker, text) {
-      const display = document.getElementById('responseDisplay');
-      const speakerEl = speaker ? `<div class="response-speaker">${escHtml(speaker)}</div>` : '';
-      display.innerHTML = `${speakerEl}<div class="response-text">${escHtml(text)}</div>`;
+      // AI responses are now only shown in the transcript display
+      // No need to update a separate response display area
       setStatus('ready');
     }
 
@@ -856,15 +866,28 @@
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // SPEECH RECOGNITION — WebSocket Phone Relay (Electron = receiver)
+    // SPEECH RECOGNITION — Local audio capture (mic + system loopback)
     // ─────────────────────────────────────────────────────────────────────
+    let recognition = null;
+    let micStream = null;
+    let loopStream = null;
+    let audioCtx = null;
+    let mixedDest = null;
+    let recognitionMuted = false;
+    let isMuted = false;
+
+    function sendTranscript(text, isFinal) {
+      if (relaySocket?.readyState === WebSocket.OPEN)
+        relaySocket.send(JSON.stringify({ type: 'transcript', text, isFinal }));
+    }
+
     function connectRelay() {
       if (relaySocket?.readyState === WebSocket.OPEN) return;
       relaySocket = new WebSocket(`${relayConfig.url}?role=electron&secret=${relayConfig.secret}`);
 
       relaySocket.onopen = () => {
         console.log('[Relay] Connected as electron');
-        showToast('📡 Relay connected — ready to receive transcript.');
+        showToast('📡 Relay connected');
         relayPingInterval = setInterval(() => {
           if (relaySocket?.readyState === WebSocket.OPEN)
             relaySocket.send(JSON.stringify({ type: 'ping' }));
@@ -874,17 +897,19 @@
       relaySocket.onmessage = (e) => {
         let msg;
         try { msg = JSON.parse(e.data); } catch { return; }
-
         if (msg.type === 'status') {
           showToast(msg.phone_connected ? '📱 Phone connected.' : '📱 Phone disconnected.');
         }
-
-        if (msg.type === 'transcript' && msg.isFinal && msg.text?.trim()) {
+        if (msg.type === 'transcript' && msg.text?.trim()) {
+          if (isMuted) return; // relay is muted — drop this message entirely
           const text = msg.text.trim();
-          console.log('[Relay] Transcript:', text);
-          addTranscriptEntry({ speaker: 'Interviewer', text, type: 'interviewer' });
-          addTranscriptLine('You', text.substring(0, 80) + (text.length > 80 ? '...' : ''));
-          if (isQuestion(text)) triggerAI(text);
+          if (msg.isFinal) {
+            addTranscriptEntry({ speaker: 'Interviewer', text, type: 'interviewer' });
+            addTranscriptLine('You', text.substring(0, 80) + (text.length > 80 ? '...' : ''));
+            updateLiveTranscript();
+            closePanel();
+            if (isQuestion(text)) triggerAI(text);
+          }
         }
       };
 
@@ -899,31 +924,114 @@
       };
     }
 
-    function startListening() {
+    async function startListening() {
       if (window.electronAPI?.startPhoneMic) {
-        window.electronAPI.startPhoneMic().then(res => {
-          if (res?.alreadyRunning) showToast('📱 Phone mic already active');
-          else showToast('📱 Launching phone mic relay...');
-        }).catch(() => {});
+        window.electronAPI.startPhoneMic().catch(err => {
+          console.warn('[startListening] startPhoneMic error:', err);
+        });
       }
       connectRelay();
-      isListening = true;
-      setStatus('listening');
-      document.getElementById('btnStart').disabled = true;
-      document.getElementById('btnStop').disabled = false;
-      setWaveActive(true);
-      document.getElementById('liveTranscript').classList.add('active');
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        try {
+          loopStream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: { width: 1, height: 1, frameRate: 1 } });
+          loopStream.getVideoTracks().forEach(t => t.stop());
+        } catch (loopErr) {
+          console.log('[Audio] Loopback unavailable, mic only:', loopErr.message);
+          loopStream = null;
+        }
+        audioCtx = new AudioContext();
+        mixedDest = audioCtx.createMediaStreamDestination();
+        audioCtx.createMediaStreamSource(micStream).connect(mixedDest);
+        if (loopStream) audioCtx.createMediaStreamSource(loopStream).connect(mixedDest);
+      } catch (err) {
+        showToast('Microphone access denied.');
+        return;
+      }
+
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) { showToast('Speech recognition not supported.'); return; }
+      recognition = new SR();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        isListening = true;
+        setStatus('listening');
+        document.getElementById('btnStart').disabled = true;
+        document.getElementById('btnStop').disabled = false;
+        setWaveActive(true);
+        document.getElementById('liveTranscript').classList.add('active');
+        document.getElementById('interim-line').style.display = 'flex';
+      };
+
+      recognition.onresult = (e) => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) {
+            if (!recognitionMuted && !isMuted) {
+              addTranscriptEntry({ speaker: 'Interviewer', text: t.trim(), type: 'interviewer' });
+              addTranscriptLine('You', t.trim().substring(0, 80) + (t.trim().length > 80 ? '...' : ''));
+              updateLiveTranscript();
+              closePanel();
+              if (isQuestion(t.trim())) triggerAI(t.trim());
+              sendTranscript(t.trim(), true);
+            }
+          } else {
+            if (!recognitionMuted && !isMuted) {
+              interim += t;
+              sendTranscript(t, false);
+            }
+          }
+        }
+        if (!recognitionMuted && !isMuted) {
+          document.getElementById('liveInterim').textContent = interim;
+          document.getElementById('interim-text').textContent = interim;
+          document.getElementById('interim-time').textContent = interim ? getNow() : '';
+        }
+      };
+
+      recognition.onerror = (e) => {
+        if (e.error === 'not-allowed') {
+          setStatus('error');
+          showToast('Microphone access denied.');
+        } else if (e.error !== 'no-speech') {
+          setStatus('error');
+        }
+      };
+
+      recognition.onend = () => {
+        if (isListening && !recognitionMuted) {
+          try { recognition.start(); } catch {}
+        } else {
+          setStatus('ready');
+          document.getElementById('btnStart').disabled = false;
+          document.getElementById('btnStop').disabled = true;
+          document.getElementById('liveInterim').textContent = '';
+          document.getElementById('interim-line').style.display = 'none';
+          setWaveActive(false);
+        }
+      };
+
+      recognition.start();
     }
 
     function stopListening() {
       isListening = false;
       if (window.electronAPI?.stopPhoneMic) window.electronAPI.stopPhoneMic();
+      if (recognition) { try { recognition.stop(); } catch {} recognition = null; }
+      if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+      if (loopStream) { loopStream.getTracks().forEach(t => t.stop()); loopStream = null; }
+      if (audioCtx) { audioCtx.close(); audioCtx = null; mixedDest = null; }
       clearInterval(relayPingInterval);
       if (relaySocket) { relaySocket.close(); relaySocket = null; }
       setStatus('ready');
       document.getElementById('btnStart').disabled = false;
       document.getElementById('btnStop').disabled = true;
       setWaveActive(false);
+      document.getElementById('liveInterim').textContent = '';
       document.getElementById('interim-text').textContent = '';
       document.getElementById('interim-time').textContent = '';
       document.getElementById('interim-line').style.display = 'none';
@@ -1052,11 +1160,12 @@
       }
       setStatus('thinking');
       try {
-        const systemMsg = buildSystemMsg('You are a confident, articulate candidate being interviewed. Respond naturally and conversationally. Keep responses concise (1-2 sentences). Be direct, confident, and authentic.');
+        const systemMsg = buildSystemMsg("You're a sharp, down-to-earth person acing a job interview. Talk like you're chatting over coffee—warm, real, and concise. Keep answers to 1-2 sentences, add a little personality, and sound like a human being, not a resume.");
         const answer = await callAIModel(question, systemMsg);
         displayResponse(MODELS[currentModel].name, answer);
         addTranscriptLine('AI', answer.substring(0, 80) + (answer.length > 80 ? '...' : ''));
         addTranscriptEntry({ speaker: 'AI (' + MODELS[currentModel].name + ')', text: answer, type: 'ai-response' });
+        updateLiveTranscript();
         setStatus('ready');
       } catch (err) {
         displayResponse('Error', err.message);
@@ -1072,10 +1181,12 @@
       }
       setStatus('thinking');
       try {
-        const systemMsg = buildSystemMsg('You are a confident, articulate candidate being interviewed. Respond naturally and concisely.');
+        const systemMsg = buildSystemMsg("You're a sharp, down-to-earth person acing a job interview. Talk like you're chatting over coffee—warm, real, and concise. Keep answers to 1-2 sentences, add a little personality, and sound like a human being, not a resume.");
         const response = await callAIModel(userMessage, systemMsg);
         displayResponse(MODELS[currentModel].name, response);
         addTranscriptLine(MODELS[currentModel].name, response.substring(0, 60) + (response.length > 60 ? '...' : ''));
+        addTranscriptEntry({ speaker: 'AI (' + MODELS[currentModel].name + ')', text: response, type: 'ai-response' });
+        updateLiveTranscript();
         setStatus('ready');
       } catch (err) {
         displayResponse('Error', err.message);
@@ -1160,6 +1271,7 @@
         displayResponse(MODELS[currentModel].name, response);
         addTranscriptEntry({ speaker: 'User (code)', text: code.substring(0, 100) + (code.length > 100 ? '...' : ''), type: 'interviewer' });
         addTranscriptEntry({ speaker: 'AI (' + MODELS[currentModel].name + ')', text: response, type: 'ai-response' });
+        updateLiveTranscript();
         document.getElementById('codeInput').value = '';
         setStatus('ready');
         showToast('Response generated');
@@ -1255,6 +1367,32 @@
       }
     });
 
+    // Alt+Z toggle mute (works globally via globalShortcut in main process)
+    function toggleMute() {
+      isMuted = !isMuted;
+      if (isMuted) {
+        document.getElementById('mute-badge').style.display = 'block';
+        if (!micStream) return;
+        recognitionMuted = true;
+        if (recognition) recognition.abort();
+        micStream.getAudioTracks().forEach(t => t.enabled = false);
+      } else {
+        document.getElementById('mute-badge').style.display = 'none';
+        if (!micStream) return;
+        micStream.getAudioTracks().forEach(t => t.enabled = true);
+        recognitionMuted = false;
+        if (isListening && recognition) {
+          try { recognition.start(); } catch {}
+        }
+      }
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.altKey && e.key === 'z' && !e.repeat) {
+        e.preventDefault();
+        toggleMute();
+      }
+    });
+
     // ─────────────────────────────────────────────────────────────────────
     // BUTTONS
     // ─────────────────────────────────────────────────────────────────────
@@ -1285,6 +1423,18 @@
         window.electronAPI.getRelayConfig().then(cfg => {
           relayConfig = cfg;
         });
+      }
+
+      // Listen for mute state changes from main process
+      if (window.electronAPI?.onMicMuteChanged) {
+        window.electronAPI.onMicMuteChanged((muted) => {
+          document.getElementById('mute-badge').style.display = muted ? 'block' : 'none';
+        });
+      }
+
+      // Global Alt+Z toggle mute from main process (works when overlay is unfocused)
+      if (window.electronAPI?.onPushToMute) {
+        window.electronAPI.onPushToMute(() => toggleMute());
       }
 
       setStatus('ready');

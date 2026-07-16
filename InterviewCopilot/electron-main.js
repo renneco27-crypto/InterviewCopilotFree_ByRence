@@ -1,10 +1,11 @@
-const { app, BrowserWindow, ipcMain, Menu, clipboard, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, clipboard, shell, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { exec, execFile, spawn } = require('child_process');
+const { exec, spawn } = require('child_process');
 
 let mainWindow;
 let contentProtectionEnabled = false;
+let isMicMuted = false;
 
 function setContentProtection(enable) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -93,13 +94,8 @@ function createWindow() {
 // PHONE MIC — Launches Edge as a standalone --app window
 // ──────────────────────────────────────────────────────────────────────
 
-// Process handle for the Edge --app window we spawned.
 let phoneMicProcess = null;
 
-/**
- * Resolve the Edge executable path.
- * Tries the standard install locations; falls back to PATH.
- */
 function getEdgePath() {
   const candidates = [
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -111,69 +107,15 @@ function getEdgePath() {
   return 'msedge'; // hope it's on PATH
 }
 
-// Window title used by the relay page — Edge --app windows use <title> as the
-// window title, so "Interview Mic" (from phone.html) is what we search for.
 const RELAY_WINDOW_TITLE = 'Interview Mic';
 
-/**
- * Check via PowerShell whether an Edge --app window with our relay page title
- * is already open. Returns a Promise<boolean>.
- */
 function relayWindowAlreadyOpen() {
   return new Promise((resolve) => {
-    // Get-Process msedge | Where MainWindowTitle matches our title
     const ps = `(Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*${RELAY_WINDOW_TITLE}*' }).Count -gt 0`;
     exec(`powershell -NoProfile -Command "${ps}"`, (err, stdout) => {
       if (err) { resolve(false); return; }
       resolve(stdout.trim().toLowerCase() === 'true');
     });
-  });
-}
-
-/**
- * Close the relay window cleanly via PowerShell by sending WM_CLOSE to the
- * window with our title, rather than force-killing the entire Edge process tree.
- * Falls back to taskkill on the tracked PID if the window title search fails.
- */
-function closeRelayWindow(pid) {
-  const ps = `
-    Add-Type -TypeDefinition @'
-    using System;
-    using System.Runtime.InteropServices;
-    public class Win32 {
-      [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lp);
-      [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
-      [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
-      [DllImport("user32.dll")] public static extern IntPtr PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
-      public delegate bool EnumWindowsProc(IntPtr h, IntPtr lp);
-    }
-'@ -ErrorAction SilentlyContinue
-    $found = $false
-    [Win32]::EnumWindows([Win32+EnumWindowsProc]{
-      param($h, $lp)
-      if (-not [Win32]::IsWindowVisible($h)) { return $true }
-      $sb = New-Object System.Text.StringBuilder 256
-      [Win32]::GetWindowText($h, $sb, 256) | Out-Null
-      if ($sb.ToString() -like '*${RELAY_WINDOW_TITLE}*') {
-        [Win32]::PostMessage($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
-        $found = $true
-        return $false
-      }
-      return $true
-    }, [IntPtr]::Zero) | Out-Null
-    $found
-  `.trim().replace(/\n\s*/g, '; ');
-
-  exec(`powershell -NoProfile -Command "${ps}"`, (err, stdout) => {
-    const closed = !err && stdout.trim().toLowerCase() === 'true';
-    if (!closed && pid) {
-      // Fallback: taskkill the specific PID we spawned
-      exec(`taskkill /F /PID ${pid}`, (e) => {
-        if (e) console.error('[PhoneMic] taskkill fallback error:', e.message);
-      });
-    } else {
-      console.log('[PhoneMic] Relay window closed via WM_CLOSE');
-    }
   });
 }
 
@@ -183,24 +125,19 @@ async function startPhoneMic() {
     return;
   }
 
-  // If our tracked process is still alive, window is already open — skip.
   if (phoneMicProcess && phoneMicProcess.exitCode === null) {
-    console.log('[PhoneMic] Already running (pid', phoneMicProcess.pid, ') — skipping open');
+    console.log('[PhoneMic] Already running (pid', phoneMicProcess.pid, ')');
     return;
   }
 
-  // Also check for a relay window that was opened outside our process tracking
-  // (e.g. user opened it manually, or Electron restarted without closing it).
   const alreadyOpen = await relayWindowAlreadyOpen();
   if (alreadyOpen) {
-    console.log('[PhoneMic] Relay window already open — skipping open');
+    console.log('[PhoneMic] Relay window already open — skipping');
     return;
   }
 
-  // Append ?autostart=1 so the relay page starts the mic automatically
-  // once its WebSocket is open — no click simulation needed.
   const url = phonePageUrl + (phonePageUrl.includes('?') ? '&' : '?') + 'autostart=1';
-  console.log('[PhoneMic] Launching Edge --app:', url);
+  console.log('[PhoneMic] Launching Edge:', url);
 
   const edgePath = getEdgePath();
 
@@ -211,7 +148,7 @@ async function startPhoneMic() {
     '--disable-extensions',
   ], {
     detached: false,
-    stdio:    'ignore',
+    stdio: 'ignore',
   });
 
   phoneMicProcess.on('error', (err) => {
@@ -220,19 +157,20 @@ async function startPhoneMic() {
   });
 
   phoneMicProcess.on('exit', (code) => {
-    console.log('[PhoneMic] Edge process exited with code', code);
+    console.log('[PhoneMic] Edge exited with code', code);
     phoneMicProcess = null;
   });
 }
 
 function stopPhoneMic() {
-  const pid = phoneMicProcess ? phoneMicProcess.pid : null;
+  if (!phoneMicProcess) return;
+  const pid = phoneMicProcess.pid;
   phoneMicProcess = null;
-  // Close the window gracefully — sends WM_CLOSE so Edge can clean up,
-  // falls back to taskkill on the tracked PID if the title search misses.
-  closeRelayWindow(pid);
+  exec(`taskkill /F /T /PID ${pid}`, (e) => {
+    if (e) console.error('[PhoneMic] taskkill error:', e.message);
+    else   console.log('[PhoneMic] Edge killed (pid', pid, ')');
+  });
 }
-
 
 // ──────────────────────────────────────────────────────────────────────
 // IPC COMMUNICATION
@@ -263,7 +201,7 @@ ipcMain.handle('get-relay-config', () => relayConfig);
 
 ipcMain.handle('start-phone-mic', async () => {
   await startPhoneMic();
-  return { success: true, alreadyRunning: !!(phoneMicProcess && phoneMicProcess.exitCode === null) };
+  return { success: true };
 });
 
 ipcMain.handle('stop-phone-mic', () => {
@@ -274,7 +212,34 @@ ipcMain.handle('stop-phone-mic', () => {
 ipcMain.handle('toggle-phone-mic', async () => {
   const running = !!(phoneMicProcess && phoneMicProcess.exitCode === null);
   if (running) { stopPhoneMic(); return { success: true, state: 'stopped' }; }
-  else          { await startPhoneMic(); return { success: true, state: 'starting' }; }
+  else         { await startPhoneMic(); return { success: true, state: 'starting' }; }
+});
+
+ipcMain.handle('set-mic-mute', (event, muted) => {
+  isMicMuted = muted;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('mic-mute-changed', muted);
+  }
+  return { success: true, muted: isMicMuted };
+});
+
+ipcMain.handle('get-mic-mute', () => {
+  return { muted: isMicMuted };
+});
+
+// Gate for relay data: renderer must call this before processing any relay
+// message. Returns false when muted so the renderer drops the update entirely.
+ipcMain.handle('relay-data-allowed', () => {
+  return { allowed: !isMicMuted };
+});
+
+// Renderer forwards raw relay WebSocket messages here; main only re-emits
+// them back as 'relay-message' if the mic is NOT muted.
+ipcMain.on('relay-message-in', (event, payload) => {
+  if (isMicMuted) return; // drop silently — mute blocks relay updates
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('relay-message', payload);
+  }
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -285,10 +250,27 @@ app.commandLine.appendSwitch('enable-features', 'WebSpeech');
 app.commandLine.appendSwitch('use-fake-ui-for-media-stream', 'false');
 app.commandLine.appendSwitch('allow-http-screen-capture');
 
+let pushToMuteActive = false;
+
 app.on('ready', () => {
   createWindow();
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
+
+  globalShortcut.register('Alt+Z', () => {
+    isMicMuted = !isMicMuted;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // push-to-mute: tells renderer to mute mic capture
+      mainWindow.webContents.send('push-to-mute', isMicMuted);
+      // relay-pause/resume: tells renderer to stop sending relay-message-in
+      // so the main process gate above never even receives new relay data
+      mainWindow.webContents.send(isMicMuted ? 'relay-pause' : 'relay-resume');
+    }
+  });
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {
