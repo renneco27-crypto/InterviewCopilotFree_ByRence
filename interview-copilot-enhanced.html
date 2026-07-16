@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Interview Copilot Pro — AI & Transcription</title>
+<style>
+  :root {
+    --bg: #0a0a0e;
+    --surface: #14141a;
+    --surface2: #1a1a22;
+    --surface3: #242430;
+    --border: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.14);
+    --text: #f0f0f0;
+    --text-sec: #a0a0a8;
+    --text-muted: #606068;
+    --accent: #6366f1;
+    --accent-glow: rgba(99,102,241,0.18);
+    --accent-bg: rgba(99,102,241,0.1);
+    --green: #10b981;
+    --green-bg: rgba(16,185,129,0.1);
+    --amber: #f59e0b;
+    --amber-bg: rgba(245,158,11,0.1);
+    --blue: #3b82f6;
+    --blue-bg: rgba(59,130,246,0.1);
+    --red: #ef4444;
+    --red-bg: rgba(239,68,68,0.1);
+    --radius: 10px;
+    --radius-sm: 6px;
+    --font: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Mono', monospace;
+    --nvidia-green: #76b900;
+    --nvidia-green-bg: rgba(118,185,0,0.1);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .logo {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--nvidia-green), var(--accent));
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .logo svg { width: 18px; height: 18px; fill: white; }
+
+  header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    flex: 1;
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px;
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    font-size: 12px;
+    color: var(--text-sec);
+    font-weight: 500;
+  }
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: background 0.3s;
+  }
+  .status-dot.listening { background: var(--green); box-shadow: 0 0 0 3px var(--green-bg); animation: pulse 2s infinite; }
+  .status-dot.thinking { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-bg); animation: pulse 2s infinite; }
+  .status-dot.responding { background: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); animation: pulse 2s infinite; }
+  .status-dot.error { background: var(--red); }
+  .status-dot.idle { background: var(--text-muted); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 420px;
+    grid-template-rows: 1fr;
+    gap: 0;
+    max-height: calc(100vh - 57px);
+  }
+
+  .left {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .btn:hover { background: var(--surface3); }
+  .btn:active { transform: scale(0.97); }
+  .btn.primary {
+    background: var(--accent);
+    border-color: transparent;
+    color: white;
+  }
+  .btn.primary:hover { background: #5558e3; }
+  .btn.danger {
+    background: var(--red-bg);
+    border-color: rgba(239,68,68,0.3);
+    color: var(--red);
+  }
+  .btn.danger:hover { background: rgba(239,68,68,0.18); }
+  .btn.record {
+    background: var(--green-bg);
+    border-color: var(--green);
+    color: var(--green);
+  }
+  .btn.record:hover { background: rgba(16,185,129,0.18); }
+  .btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
+  .spacer { flex: 1; }
+
+  .btn-icon {
+    padding: 7px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--text-sec);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+  }
+  .btn-icon:hover { background: var(--surface3); color: var(--text); }
+  .btn-icon svg { width: 16px; height: 16px; }
+
+  .transcript-wrap {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    scroll-behavior: smooth;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .transcript-wrap::-webkit-scrollbar { width: 4px; }
+  .transcript-wrap::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 12px;
+    text-align: center;
+    color: var(--text-muted);
+  }
+  .empty-state svg { width: 40px; height: 40px; opacity: 0.3; }
+  .empty-state p { font-size: 13px; }
+
+  .transcript-entries { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+
+  .entry {
+    display: flex;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+  }
+
+  .entry-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    padding-top: 2px;
+    flex-shrink: 0;
+    min-width: 42px;
+  }
+
+  .entry-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .entry-speaker {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .entry.interviewer .entry-speaker { color: var(--blue); }
+  .entry.copilot .entry-speaker { color: var(--green); }
+  .entry.ai-response .entry-speaker { color: var(--nvidia-green); }
+
+  .entry-text {
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--text);
+    word-break: break-word;
+  }
+
+  .entry.interim .entry-text {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  #interim-line {
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--surface3);
+    border: 1px dashed var(--border);
+    font-size: 14px;
+    line-height: 1.65;
+    color: var(--text-muted);
+    font-style: italic;
+    min-height: 24px;
+    display: flex;
+    gap: 10px;
+  }
+  #interim-line .entry-time { padding-top: 2px; font-size: 11px; font-family: var(--font-mono); min-width: 42px; color: var(--text-muted); }
+  #interim-text { flex: 1; }
+
+  .waveform {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 10px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    height: 44px;
+  }
+  .waveform-bar {
+    width: 3px;
+    border-radius: 3px;
+    background: var(--accent);
+    opacity: 0.4;
+    transition: height 0.1s;
+    height: 4px;
+  }
+  .waveform-bar.active { opacity: 0.9; animation: wave 0.5s ease-in-out infinite alternate; }
+  @keyframes wave { from { height: 4px; } to { height: 28px; } }
+  .waveform-bar.active:nth-child(2) { animation-delay: 0.08s; }
+  .waveform-bar.active:nth-child(3) { animation-delay: 0.16s; }
+  .waveform-bar.active:nth-child(4) { animation-delay: 0.24s; }
+  .waveform-bar.active:nth-child(5) { animation-delay: 0.1s; }
+  .waveform-bar.active:nth-child(6) { animation-delay: 0.18s; }
+  .waveform-bar.active:nth-child(7) { animation-delay: 0.05s; }
+  .waveform-label { font-size: 11px; color: var(--text-muted); margin-left: 8px; }
+
+  .code-input-box {
+    margin-top: auto;
+    padding: 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .code-input-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--nvidia-green);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .code-input-label svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .code-textarea {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    color: var(--text);
+    resize: vertical;
+    min-height: 100px;
+    max-height: 180px;
+    line-height: 1.5;
+  }
+
+  .code-textarea::placeholder {
+    color: var(--text-muted);
+  }
+
+  .code-textarea:focus {
+    outline: none;
+    border-color: var(--nvidia-green);
+    box-shadow: 0 0 8px rgba(118,185,0,0.2);
+  }
+
+  .code-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .code-btn {
+    flex: 1;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--text-sec);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: var(--font);
+  }
+
+  .code-btn:hover {
+    background: var(--surface3);
+    color: var(--text);
+  }
+
+  .code-btn.primary {
+    background: var(--nvidia-green-bg);
+    border-color: var(--nvidia-green);
+    color: var(--nvidia-green);
+  }
+
+  .code-btn.primary:hover {
+    background: rgba(118,185,0,0.18);
+  }
+
+  .code-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .right {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 0;
+  }
+
+  .settings-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .settings-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+
+  .model-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .model-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .model-option:hover {
+    background: var(--surface3);
+  }
+
+  .model-option input[type="radio"] {
+    cursor: pointer;
+  }
+
+  .model-option label {
+    flex: 1;
+    cursor: pointer;
+  }
+
+  .model-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .model-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .api-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .api-input-wrapper {
+    position: relative;
+    display: flex;
+  }
+
+  #apiKeyInput {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--font-mono);
+  }
+
+  #apiKeyInput:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .api-toggle {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-sec);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .api-toggle:hover {
+    color: var(--text);
+  }
+
+  #apiStatus {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    min-height: 16px;
+  }
+
+  .right::-webkit-scrollbar { width: 4px; }
+  .right::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+
+  #toast {
+    position: fixed;
+    bottom: -60px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface3);
+    color: var(--text);
+    padding: 12px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    font-size: 13px;
+    z-index: 999;
+    transition: bottom 0.3s;
+  }
+  #toast.show {
+    bottom: 20px;
+  }
+
+  @media (max-width: 768px) {
+    .main {
+      grid-template-columns: 1fr;
+    }
+    .right {
+      display: none;
+    }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/>
+    </svg>
+  </div>
+  <h1>Interview Copilot Pro</h1>
+  <div class="status-pill">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">Ready</span>
+  </div>
+</header>
+
+<div class="main">
+  <!-- Left: Transcript -->
+  <div class="left">
+    <div class="toolbar">
+      <button class="btn record" id="btnStart" onclick="startListening()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>
+        Record
+      </button>
+      <button class="btn danger" id="btnStop" onclick="stopListening()" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+        Stop
+      </button>
+      <div class="spacer"></div>
+      <button class="btn-icon" onclick="downloadTranscript()" title="Download">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+      <button class="btn-icon danger" onclick="clearTranscript()" title="Clear">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+      </button>
+    </div>
+
+    <div class="transcript-wrap">
+      <div id="emptyState" class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 013 3v7a3 3 0 01-6 0V5a3 3 0 013-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v3M8 22h8"/></svg>
+        <p>Press <strong>Record</strong> to start.<br/>AI will respond automatically to questions.</p>
+      </div>
+      <div id="entries" class="transcript-entries" style="display:none;"></div>
+      <div id="interim-line" style="display:none">
+        <div class="entry-time" id="interim-time"></div>
+        <div id="interim-text"></div>
+      </div>
+    </div>
+
+    <div class="waveform" id="waveform">
+      <div class="waveform-bar" id="wb1"></div>
+      <div class="waveform-bar" id="wb2"></div>
+      <div class="waveform-bar" id="wb3"></div>
+      <div class="waveform-bar" id="wb4"></div>
+      <div class="waveform-bar" id="wb5"></div>
+      <div class="waveform-bar" id="wb6"></div>
+      <div class="waveform-bar" id="wb7"></div>
+      <div class="waveform-bar" id="wb8"></div>
+      <div class="waveform-bar" id="wb9"></div>
+      <div class="waveform-bar" id="wb10"></div>
+      <div class="waveform-bar" id="wb11"></div>
+      <div class="waveform-bar" id="wb12"></div>
+      <span class="waveform-label" id="waveformLabel">Not active</span>
+    </div>
+
+    <div class="code-input-box">
+      <label class="code-input-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        AI Code Assistant
+      </label>
+      <textarea id="codeInput" class="code-textarea" placeholder="Paste code or ask questions."></textarea>
+      <div class="code-actions">
+        <button class="code-btn" onclick="pasteFromClipboard()">Paste</button>
+        <button class="code-btn primary" onclick="submitCode()">Send</button>
+        <button class="code-btn" onclick="clearCode()">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Settings & Models -->
+  <div class="right">
+    <div class="settings-section">
+      <div class="settings-title">AI Model</div>
+      <div class="model-grid" id="modelGrid"></div>
+    </div>
+
+    <div class="settings-section">
+      <div class="settings-title">API Key</div>
+      <div class="api-input-group">
+        <div class="api-input-wrapper">
+          <input type="password" id="apiKeyInput" placeholder="Enter your API key..." onchange="onApiKeyChange()">
+          <button class="api-toggle" onclick="toggleApiVis()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+        <div id="apiStatus"></div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;" id="providerHint">NVIDIA API (cached)</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ─── Configuration ────────────────────────────────────────────────────────────
+const MODELS = {
+  'nvidia': {
+    name: 'NVIDIA NIM API',
+    desc: 'Fast inference, enterprise-grade',
+    endpoint: 'https://api.nvidianims.com/v1/chat/completions',
+    modelId: 'meta/llama-3.1-8b-instruct',
+    defaultKey: ''
+  },
+  'groq': {
+    name: 'Groq (Llama 3.1)',
+    desc: 'Ultra-fast inference',
+    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+    modelId: 'llama-3.1-8b-instant',
+    defaultKey: ''
+  },
+  'glm': {
+    name: 'GLM-5.2',
+    desc: 'Chinese AI model, multi-modal',
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+    modelId: 'glm-5-turbo',
+    defaultKey: ''
+  },
+  'mistral': {
+    name: 'Mistral Small',
+    desc: 'Efficient, low-latency',
+    endpoint: 'https://api.mistral.ai/v1/chat/completions',
+    modelId: 'mistral-small-latest',
+    defaultKey: ''
+  }
+};
+
+let currentModel = 'nvidia';
+let apiKeys = JSON.parse(localStorage.getItem('copilot_apikeys') || '{}');
+let transcriptEntries = [];
+
+// ─── Speech state ─────────────────────────────────────────────────────────────
+let recognition = null;
+let isListening = false;
+
+const QUESTION_PATTERNS = [
+  /\b(what|why|how|who|where|when|which|can you|could you|would you|is there|are there|do you|did you|does|will)\b/i,
+  /\b(ano|bakit|paano|kailan|sino|nasaan|magkano|mayroon|meron|pwede|puwede|saan|ilang|ilan|mayroon ba|meron ba)\b/i,
+  /\b(unsa|ngano|giunsa|kanus-?a|kinsa|asa|pila|pwede ba|mahimo ba|nganong|duna|aduna)\b/i,
+  /\?$/
+];
+
+function isQuestion(text) {
+  return QUESTION_PATTERNS.some(p => p.test(text.trim()));
+}
+
+function getNow() {
+  const d = new Date();
+  return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+}
+
+// ─── Model Grid ───────────────────────────────────────────────────────────────
+function renderModelGrid() {
+  const grid = document.getElementById('modelGrid');
+  grid.innerHTML = '';
+  Object.entries(MODELS).forEach(([key, model]) => {
+    const option = document.createElement('div');
+    option.className = 'model-option';
+    option.innerHTML = `
+      <input type="radio" name="model" id="model-${key}" value="${key}"
+             onchange="selectModel('${key}')"
+             ${currentModel === key ? 'checked' : ''}>
+      <label for="model-${key}">
+        <div class="model-name">${model.name}</div>
+        <div class="model-desc">${model.desc}</div>
+      </label>
+    `;
+    grid.appendChild(option);
+  });
+}
+
+function selectModel(modelKey) {
+  currentModel = modelKey;
+  localStorage.setItem('copilot_current_model', currentModel);
+  updateApiKeyDisplay();
+  showToast(`Switched to ${MODELS[modelKey].name}`);
+}
+
+function updateApiKeyDisplay() {
+  const apiKey = apiKeys[currentModel] || '';
+  document.getElementById('apiKeyInput').value = apiKey;
+  updateApiStatus();
+  document.getElementById('providerHint').textContent = `${MODELS[currentModel].name} (cached)`;
+}
+
+// ─── API Key (AI Model) ───────────────────────────────────────────────────────
+function onApiKeyChange() {
+  const v = document.getElementById('apiKeyInput').value.trim();
+  apiKeys[currentModel] = v;
+  localStorage.setItem('copilot_apikeys', JSON.stringify(apiKeys));
+  updateApiStatus();
+}
+
+function updateApiStatus() {
+  const v = document.getElementById('apiKeyInput').value.trim();
+  const el = document.getElementById('apiStatus');
+  if (v.length > 10) {
+    el.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--nvidia-green)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg><span style="color:var(--nvidia-green);font-size:10px">API key configured</span>`;
+  } else {
+    el.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span style="color:var(--text-muted);font-size:10px">Enter API key</span>`;
+  }
+}
+
+function toggleApiVis() {
+  const input = document.getElementById('apiKeyInput');
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+// ─── Speech / Transcription via webkitSpeechRecognition ───────────────────────
+function startListening() {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    showToast('Speech recognition not supported. Use Chrome.');
+    return;
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    isListening = true;
+    setStatus('listening', 'Listening…');
+    document.getElementById('btnStart').disabled = true;
+    document.getElementById('btnStop').disabled = false;
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('entries').style.display = 'flex';
+    document.getElementById('interim-line').style.display = 'flex';
+    setWaveActive(true);
+  };
+
+  recognition.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) {
+        addTranscriptEntry({ speaker: 'Interviewer', text: t.trim(), type: 'interviewer' });
+        if (isQuestion(t.trim())) triggerAI(t.trim());
+      } else {
+        interim += t;
+      }
+    }
+    document.getElementById('interim-text').textContent = interim;
+    document.getElementById('interim-time').textContent = interim ? getNow() : '';
+  };
+
+  recognition.onerror = (e) => {
+    if (e.error === 'not-allowed') {
+      setStatus('error', 'Mic blocked');
+      showToast('Microphone access denied.');
+    } else if (e.error !== 'no-speech') {
+      setStatus('error', e.error);
+    }
+  };
+
+  recognition.onend = () => {
+    if (isListening) {
+      try { recognition.start(); } catch(err) {}
+    } else {
+      setStatus('idle', 'Ready');
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStop').disabled = true;
+      document.getElementById('interim-line').style.display = 'none';
+      setWaveActive(false);
+    }
+  };
+
+  recognition.start();
+}
+
+function stopListening() {
+  isListening = false;
+  if (recognition) { try { recognition.stop(); } catch(e) {} }
+  setStatus('idle', 'Ready');
+  document.getElementById('btnStart').disabled = false;
+  document.getElementById('btnStop').disabled = true;
+  setWaveActive(false);
+  document.getElementById('interim-text').textContent = '';
+  document.getElementById('interim-time').textContent = '';
+  document.getElementById('interim-line').style.display = 'none';
+}
+
+function setWaveActive(on) {
+  for (let i = 1; i <= 12; i++) {
+    const b = document.getElementById('wb' + i);
+    if (b) b.className = 'waveform-bar' + (on ? ' active' : '');
+  }
+  document.getElementById('waveformLabel').textContent = on ? 'Recording…' : 'Not active';
+}
+
+// ─── AI Response via selected model ───────────────────────────────────────────
+async function triggerAI(question) {
+  const apiKey = apiKeys[currentModel];
+  if (!apiKey) {
+    showToast('Configure AI model API key for response');
+    return;
+  }
+
+  setStatus('thinking', 'Thinking…');
+
+  try {
+    const systemMsg = 'You are a confident, articulate candidate being interviewed. Respond naturally and conversationally. Keep responses concise (1-2 sentences). Be direct, confident, and authentic.';
+    const answer = await callAIModel(question, systemMsg);
+
+    addTranscriptEntry({
+      speaker: 'AI (' + MODELS[currentModel].name + ')',
+      text: answer,
+      type: 'ai-response'
+    });
+
+    setStatus('idle', 'Ready');
+    showToast('Response generated');
+  } catch (err) {
+    setStatus('error', 'Request failed');
+    showToast('AI error: ' + err.message);
+  }
+}
+
+// ─── AI Model Integration ─────────────────────────────────────────────────────
+async function callAIModel(userMessage, systemMsg) {
+  const model = MODELS[currentModel];
+  const apiKey = apiKeys[currentModel];
+
+  if (!apiKey) {
+    throw new Error('API key not configured');
+  }
+
+  let endpoint = model.endpoint;
+  let headers = {};
+  let payload = {};
+
+  if (currentModel === 'nvidia') {
+    headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey
+    };
+    payload = {
+      model: model.modelId,
+      messages: [
+        { role: 'system', content: systemMsg },
+        { role: 'user', content: userMessage }
+      ],
+      max_tokens: 500,
+      temperature: 0.7
+    };
+  } else if (currentModel === 'groq') {
+    headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey
+    };
+    payload = {
+      model: model.modelId,
+      messages: [
+        { role: 'system', content: systemMsg },
+        { role: 'user', content: userMessage }
+      ],
+      max_tokens: 500,
+      temperature: 0.7
+    };
+  } else if (currentModel === 'mistral') {
+    headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey
+    };
+    payload = {
+      model: model.modelId,
+      messages: [
+        { role: 'system', content: systemMsg },
+        { role: 'user', content: userMessage }
+      ],
+      max_tokens: 500,
+      temperature: 0.7
+    };
+  } else if (currentModel === 'glm') {
+    headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + apiKey
+    };
+    payload = {
+      model: model.modelId,
+      messages: [
+        { role: 'system', content: systemMsg },
+        { role: 'user', content: userMessage }
+      ],
+      max_tokens: 500,
+      temperature: 0.7
+    };
+  } else if (currentModel === 'google') {
+    endpoint += '?key=' + apiKey;
+    headers = {
+      'Content-Type': 'application/json'
+    };
+    payload = {
+      contents: [{
+        parts: [{ text: systemMsg + '\n\n' + userMessage }]
+      }],
+      generationConfig: {
+        maxOutputTokens: 500,
+        temperature: 0.7
+      }
+    };
+  }
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || err.error?.message || `HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  let answer = '';
+  if (currentModel === 'google') {
+    answer = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response';
+  } else {
+    answer = data.choices?.[0]?.message?.content?.trim() || 'No response';
+  }
+
+  return answer;
+}
+
+// ─── Code Chatbox ─────────────────────────────────────────────────────────────
+async function pasteFromClipboard() {
+  try {
+    const text = await navigator.clipboard.readText();
+    document.getElementById('codeInput').value = text;
+    showToast('Code pasted from clipboard');
+  } catch (err) {
+    showToast('Failed to read clipboard (check permissions)');
+  }
+}
+
+function clearCode() {
+  document.getElementById('codeInput').value = '';
+}
+
+async function submitCode() {
+  const code = document.getElementById('codeInput').value.trim();
+  if (!code) {
+    showToast('Enter code or question first');
+    return;
+  }
+
+  const apiKey = apiKeys[currentModel];
+  if (!apiKey) {
+    showToast('Configure API key first');
+    return;
+  }
+
+  setStatus('thinking', 'Processing code...');
+
+  try {
+    const response = await callAIModel(code, 'You are an AI code assistant. Analyze this code or answer questions about it. Provide practical, concise insights.');
+
+    addTranscriptEntry({
+      speaker: 'User',
+      text: code.substring(0, 100) + (code.length > 100 ? '...' : ''),
+      type: 'interviewer'
+    });
+
+    addTranscriptEntry({
+      speaker: 'AI (' + MODELS[currentModel].name + ')',
+      text: response,
+      type: 'ai-response'
+    });
+
+    document.getElementById('codeInput').value = '';
+    setStatus('idle', 'Ready');
+    showToast('Response generated');
+  } catch (err) {
+    setStatus('error', 'Request failed');
+    showToast('Error: ' + err.message);
+  }
+}
+
+// ─── Transcript Management ────────────────────────────────────────────────────
+function addTranscriptEntry(entry) {
+  const entriesContainer = document.getElementById('entries');
+  const emptyState = document.getElementById('emptyState');
+
+  if (entriesContainer.style.display === 'none') {
+    entriesContainer.style.display = 'flex';
+    emptyState.style.display = 'none';
+  }
+
+  const entryEl = document.createElement('div');
+  entryEl.className = 'entry ' + entry.type;
+  entryEl.innerHTML = `
+    <div class="entry-time">${new Date().toLocaleTimeString()}</div>
+    <div class="entry-content">
+      <div class="entry-speaker">${entry.speaker}</div>
+      <div class="entry-text">${escHtml(entry.text)}</div>
+    </div>
+  `;
+
+  entriesContainer.appendChild(entryEl);
+  const transcriptWrap = document.querySelector('.transcript-wrap');
+  transcriptWrap.scrollTop = transcriptWrap.scrollHeight;
+
+  transcriptEntries.push(entry);
+}
+
+function clearTranscript() {
+  if (confirm('Clear all transcript?')) {
+    document.getElementById('entries').innerHTML = '';
+    document.getElementById('entries').style.display = 'none';
+    document.getElementById('emptyState').style.display = 'flex';
+    transcriptEntries = [];
+    showToast('Transcript cleared');
+  }
+}
+
+function downloadTranscript() {
+  if (transcriptEntries.length === 0) {
+    showToast('No transcript to download');
+    return;
+  }
+
+  const lines = transcriptEntries.map(e => `[${e.time || new Date().toLocaleTimeString()}] ${e.speaker}: ${e.text}`).join('\n\n');
+  const blob = new Blob([lines], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'interview-' + new Date().toISOString().split('T')[0] + '.txt';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('Transcript downloaded');
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+function setStatus(type, text) {
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+  dot.className = 'status-dot ' + type;
+  txt.textContent = text;
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+function init() {
+  currentModel = localStorage.getItem('copilot_current_model') || 'nvidia';
+  renderModelGrid();
+  updateApiKeyDisplay();
+  setStatus('idle', 'Ready');
+}
+
+init();
+</script>
+
+</body>
+</html>

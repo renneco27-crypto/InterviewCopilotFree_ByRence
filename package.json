@@ -1,0 +1,56 @@
+{
+  "name": "interview-copilot-overlay",
+  "version": "1.0.0",
+  "description": "Floating interview copilot with screen recorder protection",
+  "main": "electron-main.js",
+  "homepage": "./",
+  "author": "Your Name",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron . --enable-logging",
+    "dev": "electron . --debug",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^30.5.1",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.interview.copilot.overlay",
+    "productName": "Interview Copilot",
+    "icon": "icon.png",
+    "files": [
+      "electron-main.js",
+      "preload.js",
+      "interview-copilot-overlay.html",
+      ".env"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.utilities"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "sign": false,
+      "signAndEditExecutable": false
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron"
+    ]
+  }
+}
