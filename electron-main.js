@@ -350,39 +350,17 @@ ipcMain.handle('kill-orphan-relay', () => {
   return { success: true };
 });
 
-// Graceful quit: destroy the overlay window IMMEDIATELY (user sees it close),
-// then kill Edge in the background. Edge kill via stored PID is ~50ms so it
-// finishes long before Node exits. The slow path (orphan scan via PowerShell)
-// runs after app.quit() has been called — app.quit() doesn't block on it.
+// Graceful quit: kill Edge FIRST (so taskkill completes before Node exits),
+// THEN destroy the overlay and quit. Edge kill is fast when PID is known (~50ms).
 ipcMain.handle('quit-app', async () => {
-  cleanupDone = true; // stop will-quit from running a redundant second cleanup
+  // 1. Kill Edge relay window synchronously — must finish before app.quit() fires
+  stopPhoneMicSync();
 
-  // 1. Close the overlay window right now — user sees instant response
+  // 2. Now it's safe to destroy the window and quit
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.destroy();
-    mainWindow = null;
   }
 
-  // 2. Kill Edge: fast path uses stored PID (~50ms), slow path (PowerShell
-  //    orphan scan) runs in background so it never delays the quit feeling.
-  if (phoneMicProcess) {
-    const pid = phoneMicProcess.pid;
-    phoneMicProcess = null;
-    phoneMicLaunching = false;
-    try {
-      require('child_process').execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 3000 });
-      console.log('[Quit] Edge killed (pid', pid, ')');
-    } catch (e) {
-      console.warn('[Quit] taskkill error for pid', pid, e.message);
-      // Fall back to async orphan scan — don't block quit
-      setImmediate(() => killOrphanedRelayWindows());
-    }
-  } else {
-    // No stored handle — run orphan scan async so it doesn't delay app exit
-    setImmediate(() => killOrphanedRelayWindows());
-  }
-
-  // 3. Quit — Node/Electron exits after current event loop tick
   app.quit();
   return { success: true };
 });
