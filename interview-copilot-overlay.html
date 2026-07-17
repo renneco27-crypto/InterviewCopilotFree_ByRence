@@ -686,6 +686,15 @@
     let isListening = false;
     let transcriptEntries = [];
 
+    // ── Relay sentence buffer + question-mark–gated AI delay ─────────────
+    // Sentences arriving from the relay are accumulated here until one ends
+    // with '?'. At that point we arm a 2-second timer; if no new '?' sentence
+    // resets it before it fires, the whole buffer is sent to the AI.
+    // Non-'?' sentences just display in the transcript and extend the buffer
+    // without ever starting the timer — so the relay stays hot and listening.
+    let relayBuffer        = '';   // accumulated sentence text awaiting a '?'
+    let relayAITimer       = null; // setTimeout handle for the 2s hold-off
+
     // ── AI-running gate ───────────────────────────────────────────────────
     // Set to true the moment triggerAI/queryAI starts, cleared when the
     // response lands (or errors). While true:
@@ -1090,23 +1099,54 @@
             return;
           }
 
-          // ── Final: full sentence — show ALL in live transcript; only questions trigger AI ──
-          console.log('[Relay:final] showing in transcript, isQuestion=' + isQuestion(text) + ' text=«' + text + '»');
+          // ── Final: full sentence — always display; only queue AI when '?' detected ──
+          // Non-'?' sentences are accumulated in relayBuffer and shown in the
+          // transcript so the relay keeps listening without interruption.
+          // When a sentence ending with '?' arrives we arm a 2-second hold-off
+          // timer before sending the buffered text to the AI — giving the
+          // interviewer time to finish their thought. A subsequent '?' sentence
+          // before the timer fires cancels the old timer and restarts the 2s wait.
+          const endsWithQuestion = /[?]$/.test(text.trim());
+          console.log('[Relay:final] endsWithQuestion=' + endsWithQuestion + ' text=«' + text + '»');
+
           document.getElementById('liveInterim').textContent = '';
           resetEarlyClassification();
           addTranscriptEntry({ speaker: 'Interviewer', text, type: 'interviewer' });
           addTranscriptLine('Interviewer', text.substring(0, 80) + (text.length > 80 ? '...' : ''));
           updateLiveTranscript();
           closePanel();
-          if (isQuestion(text)) {
-            triggerAI(text, earlyClassification?.systemMsg || null);
+
+          // Append this sentence to the running buffer (space-separated)
+          relayBuffer = relayBuffer ? relayBuffer + ' ' + text : text;
+
+          if (endsWithQuestion) {
+            // Cancel any pending timer — we'll start a fresh 2s window
+            if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
+
+            // Snapshot the buffer and early classification at this moment;
+            // capture them in the closure so a later sentence can't clobber them.
+            const frozenText   = relayBuffer;
+            const frozenSysMsg = earlyClassification?.systemMsg || null;
+
+            console.log('[Relay:buffer] Question mark detected — waiting 2s before AI. Buffer=«' + frozenText.substring(0, 80) + '»');
+
+            relayAITimer = setTimeout(() => {
+              relayAITimer = null;
+              relayBuffer  = '';   // reset buffer after dispatching
+              console.log('[Relay:buffer] 2s elapsed — sending to AI: «' + frozenText.substring(0, 80) + '»');
+              triggerAI(frozenText, frozenSysMsg);
+            }, 2000);
           }
+          // Non-'?' sentences: buffer updated above, no timer started — relay
+          // stays connected and keeps listening for the rest of the question.
         }
       };
 
       relaySocket.onclose = (ev) => {
         console.warn('[Relay] Disconnected — code:', ev.code, 'reason:', ev.reason || '(none)', '— retrying in 5s');
         clearInterval(relayPingInterval);
+        if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
+        relayBuffer = '';
         relaySocket = null;
         setTimeout(connectRelay, 5000);
       };
@@ -1231,6 +1271,8 @@
       if (loopStream) { loopStream.getTracks().forEach(t => t.stop()); loopStream = null; }
       if (audioCtx) { audioCtx.close(); audioCtx = null; mixedDest = null; }
       clearInterval(relayPingInterval);
+      if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
+      relayBuffer = '';
       if (relaySocket) { relaySocket.close(); relaySocket = null; }
       setStatus('ready');
       document.getElementById('btnStart').disabled = false;
