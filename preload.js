@@ -48,6 +48,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Global Alt+Z toggle mute (works even when overlay is unfocused)
   onPushToMute: (cb) => ipcRenderer.on('push-to-mute', (_e, muted) => cb(muted)),
 
+  // Global Ctrl+M (works even when overlay is unfocused)
+  onGlobalCtrlM: (cb) => ipcRenderer.on('global-ctrl-m', () => cb()),
+
+  // Relay pause/resume state bridge
+  onRelayPause: (cb) => ipcRenderer.on('relay-pause', (_e) => cb()),
+  onRelayResume: (cb) => ipcRenderer.on('relay-resume', (_e) => cb()),
+  getRelayPaused: () => ipcRenderer.invoke('get-relay-paused'),
+
   // Synchronous mute state read — use this to gate transcription on startup
   // before any push-to-mute event has fired.
   isMuted: () => ipcRenderer.invoke('get-mic-mute').then(r => r.muted),

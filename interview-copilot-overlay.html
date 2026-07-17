@@ -204,6 +204,7 @@
       gap: 8px;
       padding: 16px;
       overflow-y: auto;
+      -webkit-app-region: no-drag;
     }
     
     .live-entry {
@@ -217,13 +218,87 @@
       background: rgba(26, 26, 34, 0.3);
       border-radius: 6px;
       align-items: flex-start;
+      -webkit-app-region: no-drag;
     }
     .live-entry .t { font-size: 11px; color: #606068; flex-shrink: 0; min-width: 50px; padding-top: 4px; font-family: 'JetBrains Mono', monospace; }
     .live-entry .s { font-weight: 700; flex-shrink: 0; font-size: 12px; }
     .live-entry .s.i { color: #76b900; }
     .live-entry .s.a { color: #76b900; }
     .live-entry .x { flex: 1; word-break: break-word; font-size: 16px; }
-    .live-interim { padding: 3px 12px 6px; font-size: 12px; color: #606068; font-style: italic; min-height: 18px; }
+
+    /* Shared small button used by entry edit confirm/cancel */
+    .tbar-btn {
+      padding: 2px 7px;
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 4px;
+      color: #a0a0a8;
+      cursor: pointer;
+      font-size: 10px;
+      font-family: inherit;
+      line-height: 1.5;
+      transition: all 0.12s;
+      white-space: nowrap;
+      -webkit-app-region: no-drag;
+    }
+    .tbar-btn:hover { background: rgba(255,255,255,0.07); color: #f0f0f0; }
+    .tbar-btn.run { background: rgba(118,185,0,0.12); border-color: rgba(118,185,0,0.35); color: #76b900; }
+    .tbar-btn.run.visible { display: inline-block; }
+    .tbar-btn.run:hover { background: rgba(118,185,0,0.22); }
+
+    /* Edit button on interviewer rows */
+    .entry-edit-btn {
+      flex-shrink: 0;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 12px;
+      opacity: 0.3;
+      padding: 2px 4px;
+      border-radius: 4px;
+      transition: opacity 0.15s, background 0.15s;
+      -webkit-app-region: no-drag;
+      align-self: flex-start;
+      pointer-events: auto;
+    }
+    .live-entry:hover .entry-edit-btn { opacity: 0.8; }
+    .entry-edit-btn:hover { opacity: 1 !important; background: rgba(99,102,241,0.2); }
+
+    /* Inline edit textarea */
+    .entry-edit-ta {
+      flex: 1;
+      background: rgba(99,102,241,0.08);
+      border: 1px solid rgba(99,102,241,0.4);
+      border-radius: 5px;
+      color: #e0e0ff;
+      font-size: 15px;
+      font-family: inherit;
+      line-height: 1.5;
+      padding: 4px 8px;
+      resize: none;
+      outline: none;
+      width: 100%;
+      -webkit-app-region: no-drag;
+    }
+
+    /* Confirm / cancel buttons beside the textarea */
+    .entry-edit-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-shrink: 0;
+      align-self: flex-start;
+      -webkit-app-region: no-drag;
+    }
+
+    .live-interim {
+      padding: 3px 12px 6px;
+      font-size: 12px;
+      color: #606068;
+      font-style: italic;
+      min-height: 18px;
+      -webkit-app-region: no-drag;
+    }
 
     /* ── Panel Overlay ── */
     .panel-overlay {
@@ -527,7 +602,7 @@
       <div class="status-indicator" id="statusIndicator"></div>
       <div class="titlebar-title">Interview Copilot</div>
       <div class="controls">
-        <button class="btn-ctrl" id="btnClearResponse" title="Clear">✕</button>
+        <button class="btn-ctrl" id="btnClearResponse" title="Close" style="-webkit-app-region:no-drag;pointer-events:auto;">✕</button>
       </div>
     </div>
 
@@ -678,8 +753,103 @@
     let relaySocket = null;
     let relayPingInterval = null;
     let relayConfig = { url: '', secret: '' };
+    // relayPaused mirrors the main-process isMicMuted gate.
+    // When true the relay onmessage handler drops every incoming transcript
+    // before it can touch the UI or trigger AI — same as the main-process gate
+    // but enforced in the renderer too so nothing slips through.
+    let relayPaused = false;
     let isListening = false;
     let transcriptEntries = [];
+
+    // ── AI echo / self-read detection ─────────────────────────────────────
+    // Stores the last AI response so we can detect when the mic picks up
+    // the user reading it back. If incoming text is a substring of (or very
+    // similar to) the last AI response we treat it as self-echo and suppress it.
+    let lastAIResponse = '';
+    let selfReadSuppressUntil = 0; // epoch ms — suppress relay until this time
+
+    function normalise(s) {
+      return s.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+    }
+
+    // Returns true when `incoming` looks like the user reading the AI script.
+    // Checks: (a) incoming is a leading/trailing chunk of the last AI response,
+    //         (b) incoming is very short (filler) right after a confirmed read,
+    //         (c) relay keeps sending continuous segments (still reading).
+    function isSelfRead(text) {
+      if (!lastAIResponse) return false;
+      const normIncoming = normalise(text);
+      const normAI = normalise(lastAIResponse);
+      if (normIncoming.length < 6) return false;
+
+      // Direct containment — the incoming chunk appears inside the AI text
+      if (normAI.includes(normIncoming)) return true;
+
+      // Leading overlap — first N words of incoming match somewhere in AI text
+      const words = normIncoming.split(' ');
+      if (words.length >= 4) {
+        const probe = words.slice(0, 5).join(' ');
+        if (normAI.includes(probe)) return true;
+      }
+
+      // Still inside suppress window (continuous relay segments = still reading)
+      if (Date.now() < selfReadSuppressUntil) return true;
+
+      return false;
+    }
+
+    function markAIResponseSpoken(responseText) {
+      lastAIResponse = responseText;
+      // Suppress for however long a ~200wpm reading would take + 3s buffer
+      const wordCount = responseText.trim().split(/\s+/).length;
+      const readMs = (wordCount / 200) * 60000 + 3000;
+      selfReadSuppressUntil = Date.now() + readMs;
+    }
+
+    // ── Early classification (phase-1 latency optimisation) ───────────────
+    // The relay now sends the first word of each utterance as phase:1 before
+    // the full sentence arrives. We pre-build the filtered systemMsg during
+    // that gap so triggerAI() can fire with zero extra work on isFinal.
+    const INTENT_MAP = {
+      what:'DEFINITION', who:'PERSON', when:'TIME', where:'LOCATION',
+      why:'REASON', how:'PROCESS', which:'CHOICE', tell:'NARRATIVE',
+      describe:'NARRATIVE', explain:'NARRATIVE', walk:'NARRATIVE',
+      give:'NARRATIVE', sell:'PITCH', can:'YESNO', could:'YESNO',
+      is:'YESNO', do:'YESNO', will:'YESNO', would:'YESNO',
+    };
+
+    let earlyClassification  = null; // { intent, systemMsg, classifiedAt }
+    let lastClassifiedText   = '';   // track what we last classified to avoid redundant work
+    let lastClassifiedWords  = 0;    // word count at last classifyEarly call
+
+    function classifyEarly(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      const words = trimmed.split(/\s+/);
+      const wc    = words.length;
+
+      // Only re-classify when meaningful new words have arrived
+      if (trimmed === lastClassifiedText) return;
+      if (earlyClassification && wc > 5 && wc - lastClassifiedWords < 3) return;
+
+      lastClassifiedText  = trimmed;
+      lastClassifiedWords = wc;
+
+      const firstWord = words[0].toLowerCase().replace(/[^a-z]/g, '');
+      const intent    = INTENT_MAP[firstWord] || 'GENERAL';
+
+      const baseSystem = "Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.";
+      const prebuiltSystemMsg = buildSystemMsg(baseSystem, trimmed);
+
+      earlyClassification = { intent, systemMsg: prebuiltSystemMsg, classifiedAt: Date.now() };
+    }
+
+    function resetEarlyClassification() {
+      earlyClassification = null;
+      lastClassifiedText  = '';
+      lastClassifiedWords = 0;
+    }
 
     function isInterviewPrompt(text) {
       const t = text.trim();
@@ -740,7 +910,7 @@
     // UTILITIES
     // ─────────────────────────────────────────────────────────────────────
     function isEditableElement(el) {
-      return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.contentEditable === 'true';
+      return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.contentEditable === 'true' || editingEntryIndex !== -1;
     }
 
     function getNow() {
@@ -775,6 +945,123 @@
       const bar = document.getElementById('transcriptText');
       bar.innerHTML = `<strong>${escHtml(speaker)}:</strong> ${escHtml(text)}`;
       bar.parentElement.scrollTop = bar.parentElement.scrollHeight;
+    }
+
+    // ── Live-entry inline edit ────────────────────────────────────────────
+    // editingEntryIndex: index into transcriptEntries[] currently being edited.
+    // -1 = nothing being edited.
+    let editingEntryIndex = -1;
+
+    // Re-render #liveEntries from transcriptEntries[], wiring edit buttons
+    // on Interviewer rows. Preserves in-progress edit by not touching the DOM
+    // when editingEntryIndex is active.
+    function updateLiveTranscript() {
+      const c = document.getElementById('liveEntries');
+      if (!c) return;
+
+      // Don't clobber while user is mid-edit
+      if (editingEntryIndex !== -1) return;
+
+      const recent = transcriptEntries.slice(-5);
+      // startIdx: absolute index of the first entry shown (for patching transcriptEntries)
+      const startIdx = Math.max(0, transcriptEntries.length - 5);
+
+      c.innerHTML = '';
+      recent.forEach((e, relIdx) => {
+        const absIdx = startIdx + relIdx;
+        const isInterviewer = e.type === 'interviewer';
+        const row = document.createElement('div');
+        row.className = 'live-entry';
+        row.dataset.idx = absIdx;
+        row.innerHTML =
+          `<span class="t">${e.time || new Date().toLocaleTimeString()}</span>` +
+          `<span class="s ${e.type === 'ai-response' ? 'a' : 'i'}">${escHtml(e.speaker)}</span>` +
+          `<span class="x" data-idx="${absIdx}">${escHtml(e.text)}</span>` +
+          (isInterviewer
+            ? `<button class="entry-edit-btn" data-idx="${absIdx}" title="Edit & re-run AI">✏️</button>`
+            : '');
+        c.appendChild(row);
+      });
+
+      // Wire edit buttons
+      c.querySelectorAll('.entry-edit-btn').forEach(btn => {
+        btn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          startEntryEdit(parseInt(btn.dataset.idx, 10));
+        });
+      });
+
+      c.scrollTop = c.scrollHeight;
+    }
+
+    // Enter edit mode for the entry at absIdx
+    function startEntryEdit(absIdx) {
+      // Only one edit at a time
+      if (editingEntryIndex !== -1) return;
+      editingEntryIndex = absIdx;
+
+      const c = document.getElementById('liveEntries');
+      const xSpan = c.querySelector(`.x[data-idx="${absIdx}"]`);
+      const editBtn = c.querySelector(`.entry-edit-btn[data-idx="${absIdx}"]`);
+      if (!xSpan) return;
+
+      const original = transcriptEntries[absIdx]?.text || xSpan.textContent;
+
+      // Replace text span with an inline textarea
+      const ta = document.createElement('textarea');
+      ta.className = 'entry-edit-ta';
+      ta.value = original;
+      ta.rows = Math.max(2, Math.ceil(original.length / 50));
+      xSpan.replaceWith(ta);
+      ta.focus();
+      ta.select();
+
+      // Replace ✏️ with Confirm + Cancel
+      if (editBtn) {
+        editBtn.outerHTML =
+          `<span class="entry-edit-actions" data-idx="${absIdx}">` +
+          `<button class="entry-confirm-btn tbar-btn run visible" data-idx="${absIdx}" title="Re-run AI with this text">▶ Re-run</button>` +
+          `<button class="entry-cancel-btn tbar-btn" data-idx="${absIdx}" title="Cancel edit">✕</button>` +
+          `</span>`;
+      }
+
+      const actions = c.querySelector(`.entry-edit-actions[data-idx="${absIdx}"]`);
+      actions?.querySelector('.entry-confirm-btn')?.addEventListener('click', () => confirmEntryEdit(absIdx));
+      actions?.querySelector('.entry-cancel-btn')?.addEventListener('click', () => cancelEntryEdit());
+
+      // Enter = confirm, Escape = cancel
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); confirmEntryEdit(absIdx); }
+        if (e.key === 'Escape') { cancelEntryEdit(); }
+      });
+
+      showToast('Edit question → Enter or ▶ Re-run');
+    }
+
+    function confirmEntryEdit(absIdx) {
+      const c = document.getElementById('liveEntries');
+      const ta = c.querySelector('textarea.entry-edit-ta');
+      if (!ta) return;
+      const corrected = ta.value.trim();
+      if (!corrected) { cancelEntryEdit(); return; }
+
+      // Patch in-place in the data array
+      if (transcriptEntries[absIdx]) {
+        transcriptEntries[absIdx].text = corrected;
+        transcriptEntries[absIdx].speaker = 'Interviewer ✎'; // mark as edited
+      }
+
+      editingEntryIndex = -1;
+      updateLiveTranscript(); // safe to re-render now
+      // Also update top bar to reflect correction
+      addTranscriptLine('Interviewer ✎', corrected.substring(0, 80) + (corrected.length > 80 ? '…' : ''));
+      // Fire AI with fuzzy phonetic hint since this was a manual correction
+      triggerAI(corrected, null, true /* allowFuzzy */);
+    }
+
+    function cancelEntryEdit() {
+      editingEntryIndex = -1;
+      updateLiveTranscript(); // re-render restores original DOM
     }
 
     function displayResponse(speaker, text) {
@@ -882,11 +1169,17 @@
     }
 
     function connectRelay() {
+      if (!relayConfig.url) {
+        console.warn('[Relay] No URL configured yet — skipping connect (will retry after config loads)');
+        return;
+      }
       if (relaySocket?.readyState === WebSocket.OPEN) return;
-      relaySocket = new WebSocket(`${relayConfig.url}?role=electron&secret=${relayConfig.secret}`);
+      const wsUrl = `${relayConfig.url}?role=electron&secret=${relayConfig.secret}`;
+      console.log('[Relay] Connecting to:', wsUrl.replace(relayConfig.secret, '***'));
+      relaySocket = new WebSocket(wsUrl);
 
       relaySocket.onopen = () => {
-        console.log('[Relay] Connected as electron');
+        console.log('[Relay] Connected as electron — readyState:', relaySocket.readyState);
         showToast('📡 Relay connected');
         relayPingInterval = setInterval(() => {
           if (relaySocket?.readyState === WebSocket.OPEN)
@@ -897,30 +1190,98 @@
       relaySocket.onmessage = (e) => {
         let msg;
         try { msg = JSON.parse(e.data); } catch { return; }
+
+        // ── DEBUG: log every raw message so we can see the relay shape ──────
+        console.log('[Relay:raw]', JSON.stringify(msg).substring(0, 200));
+
         if (msg.type === 'status') {
           showToast(msg.phone_connected ? '📱 Phone connected.' : '📱 Phone disconnected.');
         }
-        if (msg.type === 'transcript' && msg.text?.trim()) {
-          if (isMuted) return; // relay is muted — drop this message entirely
-          const text = msg.text.trim();
-          if (msg.isFinal) {
-            addTranscriptEntry({ speaker: 'Interviewer', text, type: 'interviewer' });
-            addTranscriptLine('You', text.substring(0, 80) + (text.length > 80 ? '...' : ''));
-            updateLiveTranscript();
-            closePanel();
-            if (isQuestion(text)) triggerAI(text);
+
+        if (msg.type === 'transcript') {
+          // ── DEBUG: log what we received before any gate ──────────────────
+          console.log('[Relay:transcript] raw text=«' + msg.text + '» speaker=' + msg.speaker + ' isFinal=' + msg.isFinal + ' phase=' + msg.phase);
+
+          if (!msg.text?.trim()) {
+            console.log('[Relay:drop] empty text');
+            return;
+          }
+
+          // ── Gate 1: mute / pause ────────────────────────────────────────
+          if (isMuted || relayPaused) {
+            console.log('[Relay:drop] Gate1 muted — isMuted=' + isMuted + ' relayPaused=' + relayPaused);
+            return;
+          }
+
+          const text    = msg.text.trim();
+          const speaker = msg.speaker || 'interviewer'; // 'you' | 'interviewer'
+          const phase   = msg.phase   || 'interim';     // 1 | 2 | 'interim' | 'final'
+          // Treat as final if: isFinal flag is true, OR phase is 'final', OR
+          // the relay didn't send either field (older relay versions send no phase/isFinal)
+          const isFinal = msg.isFinal === true || phase === 'final' ||
+                          (msg.isFinal === undefined && msg.phase === undefined);
+
+          console.log('[Relay:parsed] text=«' + text.substring(0,60) + '» speaker=' + speaker + ' phase=' + phase + ' isFinal=' + isFinal);
+
+          // ── Gate 2: drop own voice from electron side only ─────────────
+          // The relay sets from:'phone' for the interviewer's phone mic and
+          // from:'electron' (or omits it) for the candidate's local mic.
+          // speaker:'you' on from:'phone' is the INTERVIEWER — pass it through.
+          // speaker:'you' on from:'electron' is the CANDIDATE — drop it.
+          const from = msg.from || 'electron';
+          if (speaker === 'you' && from !== 'phone') {
+            console.log('[Relay:drop] Gate2 candidate mic (speaker=you from=' + from + ')');
+            if (isSelfRead(text)) {
+              selfReadSuppressUntil = Math.max(selfReadSuppressUntil, Date.now() + 3000);
+            }
+            return;
+          }
+
+          // ── Gate 3: self-read suppression (secondary, for edge cases) ──
+          if (isSelfRead(text)) {
+            if (!isFinal) selfReadSuppressUntil = Math.max(selfReadSuppressUntil, Date.now() + 3000);
+            console.log('[Relay:drop] Gate3 self-read suppressed:', text.substring(0, 60));
+            return;
+          }
+
+          // ── Phase 1: first word arrived — start classifying immediately ─
+          if (phase === 1) {
+            console.log('[Relay:phase1] classifyEarly:', text);
+            classifyEarly(text);
+            return;
+          }
+
+          // ── Phase 2 / interim: more words — show in interim bar but don't commit ─
+          if (!isFinal) {
+            console.log('[Relay:interim] showing in interim bar:', text.substring(0, 60));
+            classifyEarly(text);
+            document.getElementById('liveInterim').textContent = text;
+            return;
+          }
+
+          // ── Final: full sentence — show ALL in live transcript; only questions trigger AI ──
+          console.log('[Relay:final] showing in transcript, isQuestion=' + isQuestion(text) + ' text=«' + text + '»');
+          document.getElementById('liveInterim').textContent = '';
+          resetEarlyClassification();
+          addTranscriptEntry({ speaker: 'Interviewer', text, type: 'interviewer' });
+          addTranscriptLine('Interviewer', text.substring(0, 80) + (text.length > 80 ? '...' : ''));
+          updateLiveTranscript();
+          closePanel();
+          if (isQuestion(text)) {
+            triggerAI(text, earlyClassification?.systemMsg || null);
           }
         }
       };
 
-      relaySocket.onclose = () => {
-        console.log('[Relay] Disconnected — retrying in 5s');
+      relaySocket.onclose = (ev) => {
+        console.warn('[Relay] Disconnected — code:', ev.code, 'reason:', ev.reason || '(none)', '— retrying in 5s');
         clearInterval(relayPingInterval);
+        relaySocket = null;
         setTimeout(connectRelay, 5000);
       };
 
       relaySocket.onerror = (err) => {
-        console.error('[Relay] Error:', err);
+        console.error('[Relay] WebSocket error (check URL/secret in .env and that relay server is running):', err.type || err);
       };
     }
 
@@ -967,11 +1328,18 @@
       };
 
       recognition.onresult = (e) => {
+        // When the relay WebSocket is connected it is the sole transcript source.
+        // Local SpeechRecognition hears the same audio and would produce duplicate
+        // entries, so we skip addTranscriptEntry/triggerAI when relay is active.
+        // Interim text is still collected so the waveform/bar stays animated.
+        const relayActive = relaySocket?.readyState === WebSocket.OPEN;
+
         let interim = '';
         for (let i = e.resultIndex; i < e.results.length; i++) {
           const t = e.results[i][0].transcript;
           if (e.results[i].isFinal) {
-            if (!recognitionMuted && !isMuted) {
+            if (!recognitionMuted && !isMuted && !relayActive) {
+              // Relay not connected — local recognition is the only source, use it
               addTranscriptEntry({ speaker: 'Interviewer', text: t.trim(), type: 'interviewer' });
               addTranscriptLine('You', t.trim().substring(0, 80) + (t.trim().length > 80 ? '...' : ''));
               updateLiveTranscript();
@@ -979,10 +1347,13 @@
               if (isQuestion(t.trim())) triggerAI(t.trim());
               sendTranscript(t.trim(), true);
             }
+            // Relay active: relay onmessage handles transcript/AI — skip here
           } else {
-            if (!recognitionMuted && !isMuted) {
+            if (!recognitionMuted && !isMuted && !relayActive) {
               interim += t;
               sendTranscript(t, false);
+            } else if (!recognitionMuted && !isMuted) {
+              interim += t; // relay active: collect for waveform display only
             }
           }
         }
@@ -1132,10 +1503,70 @@
       return entry ? entry.text.trim() : '';
     }
 
-    function buildSystemMsg(base) {
-      if (!includeCtx) return base;
-      const ctxText = getActiveCtxText();
-      return ctxText ? ctxText + '\n\n' + base : base;
+    // ─────────────────────────────────────────────────────────────────────
+    // CONTEXT RELEVANCE FILTER
+    // Scans WH-words from the question and returns only the lines from the
+    // context blob that actually contain those keywords — so the AI only
+    // gets the slice it needs instead of the full context every time.
+    // Falls back to the full context when nothing relevant is found.
+    // This runs AFTER the existing includeCtx / activeCtxId guardrails.
+    // ─────────────────────────────────────────────────────────────────────
+    function extractRelevantContext(question, ctxText) {
+      if (!question || !ctxText) return ctxText;
+
+      // 1. Pull WH-words and their immediate neighbours from the question
+      const WH_PATTERN = /\b(what|who|when|where|why|how|which)\b/gi;
+      const whMatches = [...question.matchAll(WH_PATTERN)];
+      if (whMatches.length === 0) return ctxText; // no WH-words → full context
+
+      // 2. Build a set of search terms:
+      //    • the WH-word itself
+      //    • up to 2 "content" words that follow each WH-word (skip stop-words)
+      const STOP = new Set(['a','an','the','is','are','was','were','be','been','being',
+                            'do','does','did','to','of','in','on','at','for','and','or',
+                            'i','you','he','she','it','we','they','my','your','his','her',
+                            'its','our','their','me','him','us','them','this','that']);
+
+      const questionWords = question.toLowerCase().replace(/[^a-z0-9 ]/g,'').split(/\s+/);
+      const searchTerms = new Set();
+
+      whMatches.forEach(m => {
+        const wh = m[1].toLowerCase();
+        searchTerms.add(wh);
+        // find the index of this WH-word in questionWords and grab content words after it
+        const idx = questionWords.indexOf(wh, Math.max(0, questionWords.indexOf(wh)));
+        let picked = 0;
+        for (let i = idx + 1; i < questionWords.length && picked < 2; i++) {
+          const w = questionWords[i];
+          if (w.length > 2 && !STOP.has(w)) { searchTerms.add(w); picked++; }
+        }
+      });
+
+      // 3. Score every line of the context: count how many search terms it contains
+      const lines = ctxText.split('\n');
+      const scored = lines.map(line => {
+        const lower = line.toLowerCase();
+        let score = 0;
+        searchTerms.forEach(term => { if (lower.includes(term)) score++; });
+        return { line, score };
+      });
+
+      // 4. Keep lines with at least one keyword hit
+      const relevant = scored.filter(l => l.score > 0).map(l => l.line);
+
+      // 5. Fallback: if nothing matched, send the full context so the AI is never left empty
+      return relevant.length > 0 ? relevant.join('\n') : ctxText;
+    }
+
+    function buildSystemMsg(base, question = '') {
+      if (!includeCtx) return base;            // existing guardrail — untouched
+      const ctxText = getActiveCtxText();      // existing guardrail — untouched
+      if (!ctxText) return base;
+
+      // NEW: filter context to only the lines relevant to this question
+      const filteredCtx = extractRelevantContext(question, ctxText);
+
+      return filteredCtx + '\n\n' + base;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1153,19 +1584,40 @@
     // ─────────────────────────────────────────────────────────────────────
     // AI QUERY
     // ─────────────────────────────────────────────────────────────────────
-    async function triggerAI(question) {
+    // ── Base system prompt (single source of truth) ───────────────────────
+    const BASE_INTERVIEW_PROMPT = "Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.";
+
+    // Appended only when the user manually re-runs after editing a transcript.
+    // Tells the AI to interpret the question charitably — treating it as
+    // speech-to-text output that may contain phonetic errors or near-homophones
+    // (e.g. "Dockers" → "Docker", "react hooks" → "React Hooks", "sequel" → "SQL").
+    // Zero extra tokens on normal auto-triggered calls.
+    const FUZZY_HINT = " Note: the question was transcribed by speech-to-text and may contain phonetic spelling errors or near-homophones (e.g. 'Dockers'→'Docker', 'Kubernetes'→'Kubernetes', 'react' could mean 'React.js', 'jay son' could mean 'JSON', 'my sequel' could mean 'MySQL'). Interpret the question as the most sensible technical or professional meaning even if words look misspelled.";
+
+    async function triggerAI(question, prebuiltSystemMsg = null, allowFuzzy = false) {
+      // Hard gate: if either mute flag is set at call time, never send to AI.
+      // This catches any transcript that slipped through before the flag flipped.
+      if (isMuted || relayPaused) return;
       closePanel();
-      if (!apiKeys[currentModel]) {
-        showToast('Configure API key for ' + MODELS[currentModel].name);
-        return;
-      }
       setStatus('thinking');
       try {
-        const systemMsg = buildSystemMsg("Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.");
-        const answer = await callAIModel(question, systemMsg);
-        displayResponse(MODELS[currentModel].name, answer);
-        addTranscriptLine('AI', answer.substring(0, 80) + (answer.length > 80 ? '...' : ''));
-        addTranscriptEntry({ speaker: 'AI (' + MODELS[currentModel].name + ')', text: answer, type: 'ai-response' });
+        // Build system message:
+        //   • allowFuzzy=true  → user manually re-ran after editing → append phonetic hint
+        //   • prebuiltSystemMsg → early classification pre-built it (no fuzzy needed)
+        //   • otherwise        → build fresh from base prompt
+        let systemMsg;
+        if (allowFuzzy) {
+          // Manual re-run: add the phonetic hint to help the AI interpret corrections
+          systemMsg = buildSystemMsg(BASE_INTERVIEW_PROMPT + FUZZY_HINT, question);
+        } else {
+          systemMsg = prebuiltSystemMsg || buildSystemMsg(BASE_INTERVIEW_PROMPT, question);
+        }
+
+        const { response, usedModel } = await callAIModelWithFallback(question, systemMsg, currentModel);
+        markAIResponseSpoken(response); // arm self-read suppression before display
+        displayResponse(MODELS[usedModel].name, response);
+        addTranscriptLine('AI', response.substring(0, 80) + (response.length > 80 ? '...' : ''));
+        addTranscriptEntry({ speaker: 'AI (' + MODELS[usedModel].name + ')', text: response, type: 'ai-response' });
         updateLiveTranscript();
         setStatus('ready');
       } catch (err) {
@@ -1175,18 +1627,15 @@
       }
     }
 
-    async function queryAI(userMessage) {
-      if (!apiKeys[currentModel]) {
-        showToast('Configure API key for ' + MODELS[currentModel].name);
-        return;
-      }
+    async function queryAI(userMessage, startModelKey = currentModel) {
       setStatus('thinking');
       try {
-        const systemMsg = buildSystemMsg("Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.");
-        const response = await callAIModel(userMessage, systemMsg);
-        displayResponse(MODELS[currentModel].name, response);
-        addTranscriptLine(MODELS[currentModel].name, response.substring(0, 60) + (response.length > 60 ? '...' : ''));
-        addTranscriptEntry({ speaker: 'AI (' + MODELS[currentModel].name + ')', text: response, type: 'ai-response' });
+        const systemMsg = buildSystemMsg("Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.", userMessage);
+        const { response, usedModel } = await callAIModelWithFallback(userMessage, systemMsg, startModelKey);
+        markAIResponseSpoken(response); // arm self-read suppression before display
+        displayResponse(MODELS[usedModel].name, response);
+        addTranscriptLine(MODELS[usedModel].name, response.substring(0, 60) + (response.length > 60 ? '...' : ''));
+        addTranscriptEntry({ speaker: 'AI (' + MODELS[usedModel].name + ')', text: response, type: 'ai-response' });
         updateLiveTranscript();
         setStatus('ready');
       } catch (err) {
@@ -1195,9 +1644,9 @@
       }
     }
 
-    async function callAIModel(userMessage, systemMsg) {
-      const model = MODELS[currentModel];
-      const apiKey = apiKeys[currentModel];
+    async function callAIModel(userMessage, systemMsg, modelKey = currentModel) {
+      const model = MODELS[modelKey];
+      const apiKey = apiKeys[modelKey];
       if (!apiKey) throw new Error('API key not configured');
 
       let endpoint = model.endpoint;
@@ -1228,16 +1677,48 @@
       return data.choices?.[0]?.message?.content?.trim() || 'No response';
     }
 
+    async function callAIModelWithFallback(userMessage, systemMsg, startModelKey) {
+      const trySequence = [startModelKey];
+      for (const m of ['mistral', 'groq', 'openrouter', 'nvidia']) {
+        if (!trySequence.includes(m)) {
+          trySequence.push(m);
+        }
+      }
+
+      let lastError = null;
+      let isFallback = false;
+      for (const modelKey of trySequence) {
+        const apiKey = apiKeys[modelKey];
+        if (!apiKey) {
+          lastError = new Error(`API key for ${MODELS[modelKey].name} is not configured`);
+          isFallback = true;
+          continue;
+        }
+        try {
+          const response = await callAIModel(userMessage, systemMsg, modelKey);
+          if (isFallback) {
+            showToast(`Fallback: using ${MODELS[modelKey].name}`);
+          }
+          return { response, usedModel: modelKey };
+        } catch (err) {
+          console.warn(`Model ${MODELS[modelKey].name} failed:`, err.message);
+          lastError = err;
+          isFallback = true;
+        }
+      }
+      throw lastError || new Error('All models failed');
+    }
+
     // ─────────────────────────────────────────────────────────────────────
     // CLIPBOARD → AI
     // ─────────────────────────────────────────────────────────────────────
-    async function pasteFromClipboardAndQuery() {
+    async function pasteFromClipboardAndQuery(forceModelKey = null) {
       try {
         const text = await (window.electronAPI?.readClipboard ? window.electronAPI.readClipboard() : navigator.clipboard.readText());
         if (!text.trim()) return;
         addTranscriptLine('You', text.substring(0, 50) + (text.length > 50 ? '...' : ''));
         addTranscriptEntry({ speaker: 'User', text: text.substring(0, 100) + (text.length > 100 ? '...' : ''), type: 'interviewer' });
-        await queryAI(text);
+        await queryAI(text, forceModelKey || currentModel);
       } catch (err) {
         showToast('Clipboard error: ' + err.message);
       }
@@ -1263,15 +1744,14 @@
     async function submitCode() {
       const code = document.getElementById('codeInput').value.trim();
       if (!code) { showToast('Enter code first'); return; }
-      if (!apiKeys[currentModel]) { showToast('Configure API key'); return; }
 
       setStatus('thinking');
       try {
-        const response = await callAIModel(code, buildSystemMsg('You are an AI code assistant. Analyze this code or answer questions about it. Provide practical, concise insights.'));
+        const { response, usedModel } = await callAIModelWithFallback(code, buildSystemMsg('You are an AI code assistant. Analyze this code or answer questions about it. Provide practical, concise insights.', code), currentModel);
         addTranscriptLine('You (code)', code.substring(0, 40) + (code.length > 40 ? '...' : ''));
-        displayResponse(MODELS[currentModel].name, response);
+        displayResponse(MODELS[usedModel].name, response);
         addTranscriptEntry({ speaker: 'User (code)', text: code.substring(0, 100) + (code.length > 100 ? '...' : ''), type: 'interviewer' });
-        addTranscriptEntry({ speaker: 'AI (' + MODELS[currentModel].name + ')', text: response, type: 'ai-response' });
+        addTranscriptEntry({ speaker: 'AI (' + MODELS[usedModel].name + ')', text: response, type: 'ai-response' });
         updateLiveTranscript();
         document.getElementById('codeInput').value = '';
         setStatus('ready');
@@ -1305,7 +1785,8 @@
         </div>`;
       entriesContainer.appendChild(el);
       entriesContainer.scrollTop = entriesContainer.scrollHeight;
-      transcriptEntries.push(entry);
+      // Stamp receive-time so updateLiveTranscript shows accurate timestamps
+      transcriptEntries.push({ ...entry, time: getNow() });
     }
 
     function clearTranscript() {
@@ -1348,7 +1829,7 @@
           case 'q': e.preventDefault(); togglePanel('model'); return;
           case 'j': e.preventDefault(); togglePanel('code'); return;
           case 'k': e.preventDefault(); togglePanel('context'); return;
-          case 'm': e.preventDefault(); await pasteFromClipboardAndQuery(); return;
+          case 'm': e.preventDefault(); await pasteFromClipboardAndQuery('nvidia'); return;
         }
       }
 
@@ -1397,11 +1878,28 @@
     // ─────────────────────────────────────────────────────────────────────
     // BUTTONS
     // ─────────────────────────────────────────────────────────────────────
-    document.getElementById('btnClearResponse').addEventListener('click', async () => {
-      if (window.electronAPI?.quitApp) {
-        await window.electronAPI.quitApp(); // cleanup runs in main before window closes
-      } else {
-        window.close(); // fallback for non-Electron environments
+    document.getElementById('btnClearResponse').addEventListener('click', async (e) => {
+      e.stopPropagation();
+
+      // Immediate visual feedback so user knows it registered
+      const btn = document.getElementById('btnClearResponse');
+      btn.textContent = '…';
+      btn.disabled = true;
+
+      // Safety net: if IPC takes > 4s something is stuck — force close anyway
+      const forceClose = setTimeout(() => window.close(), 4000);
+
+      try {
+        if (window.electronAPI?.quitApp) {
+          await window.electronAPI.quitApp();
+        } else {
+          window.close();
+        }
+      } catch (err) {
+        console.warn('[Close] quitApp failed, forcing window.close():', err);
+        window.close();
+      } finally {
+        clearTimeout(forceClose);
       }
     });
 
@@ -1423,11 +1921,25 @@
       if (activeCtxId) loadCtxText(activeCtxId);
       document.getElementById('ctxToggle').checked = includeCtx;
 
-      // Load relay config from .env via preload
+      // Load relay config from .env via preload, then auto-connect relay
       if (window.electronAPI?.getRelayConfig) {
         window.electronAPI.getRelayConfig().then(cfg => {
           relayConfig = cfg;
+          console.log('[Init] Relay config loaded — url:', cfg.url || '(EMPTY — check .env RELAY_URL)', 'secret:', cfg.secret ? '***set***' : '(EMPTY)');
+          connectRelay(); // auto-connect relay on startup — don't wait for Record button
         });
+      } else {
+        console.warn('[Init] electronAPI.getRelayConfig not available — not running in Electron?');
+      }
+
+      // Sync relay-paused state from main on startup — so if the app was muted
+      // before the renderer loaded (or the page reloaded while muted) the
+      // relayPaused flag is correct before the first message arrives.
+      if (window.electronAPI?.getRelayPaused) {
+        window.electronAPI.getRelayPaused().then(({ paused }) => {
+          relayPaused = paused;
+          if (paused) console.log('[Relay] Started in paused state (muted at launch)');
+        }).catch(() => {}); // non-fatal if preload not yet updated
       }
 
       // Listen for mute state changes from main process
@@ -1438,8 +1950,35 @@
       }
 
       // Global Alt+Z toggle mute from main process (works when overlay is unfocused)
+      // Use the authoritative muted state from main rather than always toggling,
+      // so rapid Alt+Z presses can't desync main and renderer.
       if (window.electronAPI?.onPushToMute) {
-        window.electronAPI.onPushToMute(() => toggleMute());
+        window.electronAPI.onPushToMute((muted) => {
+          if (isMuted !== muted) toggleMute();
+        });
+      }
+
+      // relay-pause / relay-resume are sent by main whenever Alt+Z fires.
+      // They set relayPaused so the relay WebSocket onmessage handler drops
+      // transcripts even if the renderer-local isMuted flag gets out of sync.
+      if (window.electronAPI?.onRelayPause) {
+        window.electronAPI.onRelayPause(() => {
+          relayPaused = true;
+          console.log('[Relay] Paused by main process — transcripts will be dropped');
+        });
+      }
+      if (window.electronAPI?.onRelayResume) {
+        window.electronAPI.onRelayResume(() => {
+          relayPaused = false;
+          console.log('[Relay] Resumed by main process');
+        });
+      }
+
+      // Global Ctrl+M shortcut from main process (works when overlay is unfocused)
+      if (window.electronAPI?.onGlobalCtrlM) {
+        window.electronAPI.onGlobalCtrlM(async () => {
+          await pasteFromClipboardAndQuery('nvidia');
+        });
       }
 
       setStatus('ready');

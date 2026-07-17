@@ -6,6 +6,7 @@ const { exec, spawn } = require('child_process');
 let mainWindow;
 let contentProtectionEnabled = false;
 let isMicMuted = false;
+let cleanupDone = false; // guard: ensures stopPhoneMicSync only runs once across quit paths
 
 function setContentProtection(enable) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -87,6 +88,9 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    // Ensure the relay Edge window is always killed when the overlay closes,
+    // regardless of how it was closed (OS X button, task manager, etc.)
+    stopPhoneMicSync();
   });
 }
 
@@ -95,6 +99,10 @@ function createWindow() {
 // ──────────────────────────────────────────────────────────────────────
 
 let phoneMicProcess = null;
+// Launch lock: set to true the moment we decide to spawn, cleared on exit/error.
+// Prevents a second concurrent startPhoneMic() call from spawning a duplicate
+// window during the async gap between the decision and the process being alive.
+let phoneMicLaunching = false;
 
 function getEdgePath() {
   const candidates = [
@@ -109,32 +117,70 @@ function getEdgePath() {
 
 const RELAY_WINDOW_TITLE = 'Interview Mic';
 
-function relayWindowAlreadyOpen() {
-  return new Promise((resolve) => {
-    const ps = `(Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*${RELAY_WINDOW_TITLE}*' }).Count -gt 0`;
-    exec(`powershell -NoProfile -Command "${ps}"`, (err, stdout) => {
-      if (err) { resolve(false); return; }
-      resolve(stdout.trim().toLowerCase() === 'true');
-    });
-  });
+// Returns the PIDs of every Edge process that either:
+//   (a) has a MainWindowTitle matching RELAY_WINDOW_TITLE, OR
+//   (b) was launched with a command-line containing the relay URL.
+// Dual approach because --app windows sometimes don't set MainWindowTitle
+// reliably until the page finishes loading.
+function getRelayWindowPids() {
+  const pids = new Set();
+
+  // Strategy 1: title match via PowerShell Get-Process (fast, all Windows versions)
+  try {
+    const ps = `Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*${RELAY_WINDOW_TITLE}*' } | ForEach-Object { $_.Id }`;
+    const stdout = require('child_process').execSync(
+      `powershell -NoProfile -Command "${ps}"`,
+      { encoding: 'utf8', timeout: 2000 }
+    );
+    stdout.trim().split(/\s+/).map(Number).filter(n => n > 0).forEach(p => pids.add(p));
+  } catch {}
+
+  // Strategy 2: command-line URL match via Get-CimInstance
+  // Replaces wmic which was removed in Windows 11 22H2+
+  if (phonePageUrl) {
+    try {
+      const urlFragment = phonePageUrl.replace(/^https?:\/\//, '').split('?')[0];
+      const ps = `Get-CimInstance Win32_Process -Filter "name='msedge.exe'" | Where-Object { $_.CommandLine -like '*${urlFragment}*' } | Select-Object -ExpandProperty ProcessId`;
+      const stdout = require('child_process').execSync(
+        `powershell -NoProfile -Command "${ps}"`,
+        { encoding: 'utf8', timeout: 2000 }
+      );
+      stdout.trim().split(/\s+/).map(Number).filter(n => n > 0).forEach(p => pids.add(p));
+    } catch {}
+  }
+
+  return [...pids];
 }
 
 async function startPhoneMic() {
   if (!phonePageUrl) {
-    console.warn('[PhoneMic] No phonePageUrl configured — check .env RELAY_URL');
+    console.warn('[PhoneMic] No phonePageUrl configured -- check .env RELAY_URL');
     return;
   }
 
+  // Guard 1: a previous call is still in the middle of spawning.
+  if (phoneMicLaunching) {
+    console.log('[PhoneMic] Launch already in progress -- skipping duplicate call');
+    return;
+  }
+
+  // Guard 2: we have a live child process handle.
   if (phoneMicProcess && phoneMicProcess.exitCode === null) {
     console.log('[PhoneMic] Already running (pid', phoneMicProcess.pid, ')');
     return;
   }
 
-  const alreadyOpen = await relayWindowAlreadyOpen();
-  if (alreadyOpen) {
-    console.log('[PhoneMic] Relay window already open — skipping');
-    return;
+  // Guard 3: a relay window exists from a previous run (orphan or manual open).
+  // Kill it first so we always start clean rather than stacking windows.
+  const orphanPids = getRelayWindowPids();
+  if (orphanPids.length > 0) {
+    console.log('[PhoneMic] Found existing relay window(s):', orphanPids, '-- killing before relaunch');
+    killRelayPids(orphanPids);
+    // Short pause so the OS has time to release the window before we reopen.
+    await new Promise(r => setTimeout(r, 400));
   }
+
+  phoneMicLaunching = true;
 
   const url = phonePageUrl + (phonePageUrl.includes('?') ? '&' : '?') + 'autostart=1';
   console.log('[PhoneMic] Launching Edge:', url);
@@ -151,41 +197,63 @@ async function startPhoneMic() {
     stdio: 'ignore',
   });
 
+  // Lock released as soon as the process is actually alive (or failed).
+  phoneMicProcess.on('spawn', () => {
+    phoneMicLaunching = false;
+    console.log('[PhoneMic] Edge spawned (pid', phoneMicProcess && phoneMicProcess.pid, ')');
+  });
+
   phoneMicProcess.on('error', (err) => {
     console.error('[PhoneMic] Failed to launch Edge:', err.message);
     phoneMicProcess = null;
+    phoneMicLaunching = false;
   });
 
   phoneMicProcess.on('exit', (code) => {
     console.log('[PhoneMic] Edge exited with code', code);
     phoneMicProcess = null;
+    phoneMicLaunching = false;
   });
 }
 
-function stopPhoneMic() {
-  if (!phoneMicProcess) return;
-  const pid = phoneMicProcess.pid;
-  phoneMicProcess = null;
-  exec(`taskkill /F /T /PID ${pid}`, (e) => {
-    if (e) console.error('[PhoneMic] taskkill error:', e.message);
-    else   console.log('[PhoneMic] Edge killed (pid', pid, ')');
-  });
+// Kill a list of PIDs synchronously so callers (will-quit, quit-app) can be
+// sure the windows are gone before the Electron process itself exits.
+function killRelayPids(pids) {
+  for (const pid of pids) {
+    try {
+      require('child_process').execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 3000 });
+      console.log('[Cleanup] Killed relay Edge pid', pid);
+    } catch (e) {
+      console.warn('[Cleanup] taskkill failed for pid', pid, e.message);
+    }
+  }
+}
+
+// Synchronously stop the phone mic child process AND any orphaned relay windows.
+// When we have a stored PID we kill it directly and skip the orphan scan —
+// the scan runs two PowerShell commands and can take 2-4 s, making quit feel hung.
+function stopPhoneMicSync() {
+  cleanupDone = true; // signal will-quit to skip redundant cleanup
+  if (phoneMicProcess) {
+    const pid = phoneMicProcess.pid;
+    phoneMicProcess = null;
+    phoneMicLaunching = false;
+    try {
+      require('child_process').execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 3000 });
+      console.log('[PhoneMic] Edge killed (pid', pid, ')');
+      return; // PID kill succeeded — skip the slow orphan scan
+    } catch (e) {
+      console.warn('[PhoneMic] taskkill error for pid', pid, e.message);
+      // Fall through to orphan scan as a safety net
+    }
+  }
+  // No stored handle (orphan from a previous run, crash-restart, etc.) — scan for it.
+  killOrphanedRelayWindows();
 }
 
 function killOrphanedRelayWindows() {
-  try {
-    const ps = `Get-Process msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*${RELAY_WINDOW_TITLE}*' } | ForEach-Object { $_.Id }`;
-    const stdout = require('child_process').execSync(`powershell -NoProfile -Command "${ps}"`, { encoding: 'utf8', timeout: 5000 });
-    const pids = stdout.trim().split(/\s+/).filter(Boolean);
-    for (const pid of pids) {
-      try {
-        if (pid > 0) {
-          require('child_process').execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 3000 });
-          console.log('[Cleanup] Killed orphan Edge pid', pid);
-        }
-      } catch {}
-    }
-  } catch {}
+  const pids = getRelayWindowPids();
+  if (pids.length > 0) killRelayPids(pids);
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -221,13 +289,13 @@ ipcMain.handle('start-phone-mic', async () => {
 });
 
 ipcMain.handle('stop-phone-mic', () => {
-  stopPhoneMic();
+  stopPhoneMicSync();
   return { success: true };
 });
 
 ipcMain.handle('toggle-phone-mic', async () => {
   const running = !!(phoneMicProcess && phoneMicProcess.exitCode === null);
-  if (running) { stopPhoneMic(); return { success: true, state: 'stopped' }; }
+  if (running) { stopPhoneMicSync(); return { success: true, state: 'stopped' }; }
   else         { await startPhoneMic(); return { success: true, state: 'starting' }; }
 });
 
@@ -249,6 +317,24 @@ ipcMain.handle('relay-data-allowed', () => {
   return { allowed: !isMicMuted };
 });
 
+// Authoritative mute-state query — renderer calls this on startup and after
+// reconnecting the relay socket so it can sync relayPaused without waiting
+// for the next Alt+Z toggle.
+ipcMain.handle('get-relay-paused', () => {
+  return { paused: isMicMuted };
+});
+
+// ── REQUIRED PRELOAD ADDITIONS ──────────────────────────────────────────────
+// The renderer expects these two entries in contextBridge.exposeInMainWorld:
+//
+//   onRelayPause:  (cb) => ipcRenderer.on('relay-pause',  (_e) => cb()),
+//   onRelayResume: (cb) => ipcRenderer.on('relay-resume', (_e) => cb()),
+//   getRelayPaused: ()  => ipcRenderer.invoke('get-relay-paused'),
+//
+// Without them the renderer's onRelayPause/onRelayResume listeners in init()
+// are no-ops and the renderer-side relayPaused flag never gets set.
+// ────────────────────────────────────────────────────────────────────────────
+
 // Renderer forwards raw relay WebSocket messages here; main only re-emits
 // them back as 'relay-message' if the mic is NOT muted.
 ipcMain.on('relay-message-in', (event, payload) => {
@@ -264,16 +350,39 @@ ipcMain.handle('kill-orphan-relay', () => {
   return { success: true };
 });
 
-// Graceful quit: stop phone mic + kill relay windows BEFORE closing the window,
-// so cleanup runs while the process is still alive.
+// Graceful quit: destroy the overlay window IMMEDIATELY (user sees it close),
+// then kill Edge in the background. Edge kill via stored PID is ~50ms so it
+// finishes long before Node exits. The slow path (orphan scan via PowerShell)
+// runs after app.quit() has been called — app.quit() doesn't block on it.
 ipcMain.handle('quit-app', async () => {
-  stopPhoneMic();
-  killOrphanedRelayWindows();
+  cleanupDone = true; // stop will-quit from running a redundant second cleanup
 
+  // 1. Close the overlay window right now — user sees instant response
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.destroy(); // destroy skips the 'close' event, preventing loops
+    mainWindow.destroy();
+    mainWindow = null;
   }
 
+  // 2. Kill Edge: fast path uses stored PID (~50ms), slow path (PowerShell
+  //    orphan scan) runs in background so it never delays the quit feeling.
+  if (phoneMicProcess) {
+    const pid = phoneMicProcess.pid;
+    phoneMicProcess = null;
+    phoneMicLaunching = false;
+    try {
+      require('child_process').execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 3000 });
+      console.log('[Quit] Edge killed (pid', pid, ')');
+    } catch (e) {
+      console.warn('[Quit] taskkill error for pid', pid, e.message);
+      // Fall back to async orphan scan — don't block quit
+      setImmediate(() => killOrphanedRelayWindows());
+    }
+  } else {
+    // No stored handle — run orphan scan async so it doesn't delay app exit
+    setImmediate(() => killOrphanedRelayWindows());
+  }
+
+  // 3. Quit — Node/Electron exits after current event loop tick
   app.quit();
   return { success: true };
 });
@@ -289,7 +398,9 @@ app.commandLine.appendSwitch('allow-http-screen-capture');
 let pushToMuteActive = false;
 
 app.on('ready', () => {
-  killOrphanedRelayWindows();
+  // Run orphan cleanup async so it doesn't delay window creation on startup.
+  // Uses PowerShell so even 2s timeout won't block the UI from appearing.
+  setImmediate(() => killOrphanedRelayWindows());
   createWindow();
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
@@ -304,11 +415,20 @@ app.on('ready', () => {
       mainWindow.webContents.send(isMicMuted ? 'relay-pause' : 'relay-resume');
     }
   });
+
+  globalShortcut.register('CommandOrControl+M', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('global-ctrl-m');
+    }
+  });
 });
 
 app.on('will-quit', () => {
-  stopPhoneMic();
-  killOrphanedRelayWindows();
+  // Covers task-manager kill / OS X Cmd+Q — quit-app IPC sets cleanupDone first
+  // so we don't run a redundant (and slow) orphan scan after a clean quit.
+  if (!cleanupDone) {
+    stopPhoneMicSync();
+  }
   globalShortcut.unregisterAll();
 });
 
