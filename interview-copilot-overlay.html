@@ -1641,6 +1641,8 @@
       const empty = document.getElementById('transcriptEmpty');
       if (!entriesContainer) return;
 
+      if (transcriptEntries.length > 0 && transcriptEntries[transcriptEntries.length - 1].text === entry.text) return;
+
       if (entriesContainer.style.display === 'none') {
         entriesContainer.style.display = 'flex';
         if (empty) empty.style.display = 'none';
