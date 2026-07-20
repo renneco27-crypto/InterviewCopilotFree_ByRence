@@ -230,24 +230,26 @@ function killRelayPids(pids) {
 }
 
 // Synchronously stop the phone mic child process AND any orphaned relay windows.
-// When we have a stored PID we kill it directly and skip the orphan scan —
-// the scan runs two PowerShell commands and can take 2-4 s, making quit feel hung.
+// Edge uses a process-pre-launch model — the PID from spawn may not be the
+// actual window process, so we always run the orphan scan (title/URL match)
+// as the reliable kill path. The fast PID kill is attempted first but never
+// shortcuts the scan.
 function stopPhoneMicSync() {
   cleanupDone = true; // signal will-quit to skip redundant cleanup
   if (phoneMicProcess) {
     const pid = phoneMicProcess.pid;
     phoneMicProcess = null;
     phoneMicLaunching = false;
+    // Fast PID-based kill — may miss the real window process
     try {
       require('child_process').execSync(`taskkill /F /T /PID ${pid}`, { stdio: 'ignore', timeout: 3000 });
-      console.log('[PhoneMic] Edge killed (pid', pid, ')');
-      return; // PID kill succeeded — skip the slow orphan scan
+      console.log('[PhoneMic] Edge killed by PID (pid', pid, ')');
     } catch (e) {
       console.warn('[PhoneMic] taskkill error for pid', pid, e.message);
-      // Fall through to orphan scan as a safety net
     }
   }
-  // No stored handle (orphan from a previous run, crash-restart, etc.) — scan for it.
+  // Orphan scan by title/URL — catches the actual Edge window even when
+  // the spawned PID is stale or handed off to a child process.
   killOrphanedRelayWindows();
 }
 
