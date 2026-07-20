@@ -156,6 +156,34 @@
 
     .empty-state { color: #606068; font-size: 14px; text-align: center; }
 
+    /* ── Filler Display ── */
+    .filler-display {
+      flex-shrink: 0;
+      padding: 16px 20px;
+      background: rgba(99, 102, 241, 0.08);
+      border-top: 1px solid rgba(99, 102, 241, 0.15);
+      border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+      text-align: center;
+      display: none;
+      animation: fadeIn 0.2s ease-in;
+    }
+    .filler-display.show { display: block; }
+    .filler-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #6366f1;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .filler-text {
+      font-size: 18px;
+      line-height: 1.6;
+      color: #e0e0ff;
+      font-weight: 500;
+      text-shadow: 0 0 12px rgba(99, 102, 241, 0.12);
+    }
+
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
     .floating-container.minimized .ai-response-display { display: none; }
@@ -538,6 +566,11 @@
 
 
 
+    <div class="filler-display" id="fillerDisplay">
+      <div class="filler-label">Filler</div>
+      <div class="filler-text" id="fillerText"></div>
+    </div>
+
     <div class="live-transcript" id="liveTranscript">
       <div id="liveEntries"></div>
       <div class="live-interim" id="liveInterim"></div>
@@ -711,6 +744,32 @@
     // similar to) the last AI response we treat it as self-echo and suppress it.
     let lastAIResponse = '';
     let selfReadSuppressUntil = 0; // epoch ms — suppress relay until this time
+
+    // ── Filler phrases (keyword-matched, zero-latency stall talk) ─────────
+    const FILLER_PHRASES = [
+      { keywords: ['experience','background','worked','role','job','company','position','previous','last role','at your last','current role'], text: "That brings back a specific project from my time at my last role" },
+      { keywords: ['experience','background','worked','role','job','company','position','previous','last role','tell me about yourself','walk me through'], text: "When looking back at my overall background, this is something I've spent a lot of time working on, particularly because" },
+      { keywords: ['handle','approach','situation','scenario','tackle','deal with','would you','if you','what would'], text: "The way I typically approach that kind of scenario stems from my work on projects where" },
+      { keywords: ['handle','approach','across','previous roles','experience','found that','success'], text: "In my experience across previous roles, I've found that tackling this successfully really comes down to." },
+      { keywords: ['challenge','difficult','problem','issue','obstacle','conflict','hardest','tough'], text: "I've encountered a situation like that before" },
+      { keywords: ['strategy','process','method','how do you','framework','approach','system'], text: "Over the course of my career, my strategy for handling this has evolved, but the core foundation is..." },
+      { keywords: [], text: "I've encountered a situation like that before" },
+    ];
+
+    function matchFiller(text) {
+      if (!text) return FILLER_PHRASES[FILLER_PHRASES.length - 1].text;
+      const lower = text.toLowerCase();
+      let best = { phrase: FILLER_PHRASES[FILLER_PHRASES.length - 1].text, score: 0 };
+      for (const f of FILLER_PHRASES) {
+        if (f.keywords.length === 0) continue;
+        let score = 0;
+        for (const kw of f.keywords) {
+          if (lower.includes(kw)) score++;
+        }
+        if (score > best.score) best = { phrase: f.text, score };
+      }
+      return best.phrase;
+    }
 
     function normalise(s) {
       return s.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
@@ -892,9 +951,21 @@
     }
 
     function displayResponse(speaker, text) {
-      // AI responses are now only shown in the transcript display
-      // No need to update a separate response display area
+      clearFiller();
       setStatus('ready');
+    }
+
+    function showFiller(text) {
+      const el = document.getElementById('fillerText');
+      const container = document.getElementById('fillerDisplay');
+      if (!el || !container) return;
+      el.textContent = text;
+      container.classList.add('show');
+    }
+
+    function clearFiller() {
+      const container = document.getElementById('fillerDisplay');
+      if (container) container.classList.remove('show');
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1117,6 +1188,9 @@
             relayBuffer = relayBuffer ? relayBuffer + ' ' + text : text;
 
             if (endsWithQuestion) {
+              // Show filler immediately — zero-latency stall talk while AI thinks
+              showFiller(matchFiller(text));
+
               // Cancel any pending timer — we'll start a fresh 2s window
               if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
 
@@ -1211,7 +1285,10 @@
                 addTranscriptLine('You', trimmed.substring(0, 80) + (trimmed.length > 80 ? '...' : ''));
                 updateLiveTranscript();
                 closePanel();
-                if (isQuestion(trimmed)) triggerAI(trimmed);
+                if (isQuestion(trimmed)) {
+                  showFiller(matchFiller(trimmed));
+                  triggerAI(trimmed);
+                }
               }
               sendTranscript(trimmed, true);
             }
@@ -1451,6 +1528,7 @@
       c.innerHTML = recent.map(e =>
         `<div class="live-entry"><span class="t">${e.time || new Date().toLocaleTimeString()}</span><span class="s ${e.type === 'ai-response' ? 'a' : 'i'}">${escHtml(e.speaker)}</span><span class="x">${escHtml(e.text)}</span></div>`
       ).join('');
+      c.parentElement.scrollTop = c.parentElement.scrollHeight;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1498,10 +1576,10 @@
       }
     }
 
-    async function queryAI(userMessage, startModelKey = currentModel) {
+    async function queryAI(userMessage, startModelKey = currentModel, systemMsgOverride = null) {
       setStatus('thinking');
       try {
-        const systemMsg = buildSystemMsg("Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.", userMessage);
+        const systemMsg = systemMsgOverride || buildSystemMsg("Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.", userMessage);
         const { response, usedModel } = await callAIModelWithFallback(userMessage, systemMsg, startModelKey);
         markAIResponseSpoken(response); // arm self-read suppression before display
         displayResponse(MODELS[usedModel].name, response);
@@ -1589,7 +1667,10 @@
         if (!text.trim()) return;
         addTranscriptLine('You', text.substring(0, 50) + (text.length > 50 ? '...' : ''));
         addTranscriptEntry({ speaker: 'User', text: text.substring(0, 100) + (text.length > 100 ? '...' : ''), type: 'interviewer' });
-        await queryAI(text, forceModelKey || currentModel);
+        showFiller(matchFiller(text));
+        const codingMsg = "This is a coding question. Answer it concisely and accurately with code examples where relevant.";
+        const sysMsg = buildSystemMsg(codingMsg, text);
+        await queryAI(text, forceModelKey || currentModel, sysMsg);
       } catch (err) {
         showToast('Clipboard error: ' + err.message);
       }
