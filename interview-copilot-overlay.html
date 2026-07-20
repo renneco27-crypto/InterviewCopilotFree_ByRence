@@ -978,7 +978,6 @@
 
     function showFiller(text) {
       addTranscriptEntry({ speaker: 'AI', text, type: 'ai-response' });
-      updateLiveTranscript();
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1704,7 +1703,6 @@
         if (!text.trim()) return;
         addTranscriptLine('You', text.substring(0, 50) + (text.length > 50 ? '...' : ''));
         addTranscriptEntry({ speaker: 'User', text: text.substring(0, 100) + (text.length > 100 ? '...' : ''), type: 'interviewer' });
-        showFiller(matchFiller(text));
         const codingMsg = "This is a coding question. Answer it concisely and accurately with code examples where relevant.";
         const sysMsg = buildSystemMsg(codingMsg, text);
         await queryAI(text, forceModelKey || currentModel, sysMsg);
