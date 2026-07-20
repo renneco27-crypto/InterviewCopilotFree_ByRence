@@ -747,28 +747,82 @@
 
     // ── Filler phrases (keyword-matched, zero-latency stall talk) ─────────
     const FILLER_PHRASES = [
-      { keywords: ['experience','background','worked','role','job','company','position','previous','last role','at your last','current role'], text: "That brings back a specific project from my time at my last role" },
-      { keywords: ['experience','background','worked','role','job','company','position','previous','last role','tell me about yourself','walk me through'], text: "When looking back at my overall background, this is something I've spent a lot of time working on, particularly because" },
-      { keywords: ['handle','approach','situation','scenario','tackle','deal with','would you','if you','what would'], text: "The way I typically approach that kind of scenario stems from my work on projects where" },
-      { keywords: ['handle','approach','across','previous roles','experience','found that','success'], text: "In my experience across previous roles, I've found that tackling this successfully really comes down to." },
-      { keywords: ['challenge','difficult','problem','issue','obstacle','conflict','hardest','tough'], text: "I've encountered a situation like that before" },
-      { keywords: ['strategy','process','method','how do you','framework','approach','system'], text: "Over the course of my career, my strategy for handling this has evolved, but the core foundation is..." },
-      { keywords: [], text: "I've encountered a situation like that before" },
+      {
+        keywords: ['experience','background','role','job','company','last role','career','position','responsibility','history'],
+        texts: [
+          "That brings back a specific project from my time in my last role, where we...",
+          "When looking back at my overall background, this is something I've spent a lot of time on, particularly because...",
+          "Throughout my career, I've had several opportunities to focus on this, and what stands out most is...",
+          "In my previous position, this was actually a core part of my day-to-day responsibilities, especially when...",
+          "That's been a central theme in my professional history, and the way I usually outline it is...",
+          "Reflecting on my time with my former company, a really relevant example that springs to mind is...",
+          "I've had direct ownership over that area in past roles, and the main lesson I took from it was...",
+        ],
+      },
+      {
+        keywords: ['handle','approach','situation','scenario','tackle','deal with','manage','execute','navigate','respond'],
+        texts: [
+          "The way I typically approach that kind of scenario stems from my work on previous projects, where...",
+          "Whenever I've had to deal with a dynamic like that, my first priority has always been to...",
+          "I've navigated similar situations in the past, and the strategy that yielded the best result was...",
+          "My initial reaction when managing that type of task is to immediately step back and look at...",
+          "The framework I rely on when tackling that specific issue usually starts with...",
+          "In terms of execution, I've found that responding effectively to that comes down to...",
+          "I recall a specific scenario where I had to handle something nearly identical, and the way it played out was...",
+        ],
+      },
+      {
+        keywords: ['challenge','difficult','problem','issue','obstacle','conflict','mistake','failure','blocker','setback'],
+        texts: [
+          "I've encountered a situation exactly like that before, and the first thing I had to figure out was...",
+          "When faced with that kind of obstacle, my primary focus is to break the problem down by...",
+          "That was definitely a major learning curve for me earlier on, and the way I resolved the issue was...",
+          "Handling difficult roadblocks like that usually requires balancing immediate triage with long-term fixes, starting with...",
+          "I actually dealt with a similar setback during a high-stakes initiative, where the core issue was...",
+          "Whenever a conflict or blocker like that arises, I make it a point to address it directly by...",
+          "That type of challenge comes up periodically, and my proven approach for turning it around involves...",
+        ],
+      },
+      {
+        keywords: ['strategy','process','method','framework','plan','system','workflow','structure','prioritize','decision'],
+        texts: [
+          "Over the course of my career, my strategy for handling this has evolved, but the core foundation usually starts with...",
+          "I actually built out a standardized workflow for this in a previous role, which focused primarily on...",
+          "My decision-making process in those circumstances is pretty structured, beginning with...",
+          "The method I find most effective for prioritizing tasks in that environment revolves around...",
+          "When designing a plan to address that, I always make sure the system accounts for...",
+          "The general framework I apply here has three distinct phases, starting with...",
+          "Establishing a reliable process for that was a major goal of mine recently, and it centered on...",
+        ],
+      },
+      {
+        keywords: [],
+        texts: [
+          "That's a crucial area to dive into, and looking at how I've approached it in practice...",
+          "I've spent a lot of time thinking about and working through that exact topic, particularly around...",
+          "There are a few key dimensions to how I look at that, but the most significant aspect is...",
+          "That aligns really closely with how I operate day-to-day, especially when considering...",
+          "To give you a complete picture on that, it's best to break it down into...",
+          "I have a couple of different insights on that based on past experience, starting with...",
+          "That's an excellent point to highlight, and the way I usually frame my perspective on it is...",
+        ],
+      },
     ];
 
     function matchFiller(text) {
-      if (!text) return FILLER_PHRASES[FILLER_PHRASES.length - 1].text;
+      if (!text) return FILLER_PHRASES[FILLER_PHRASES.length - 1].texts[Math.floor(Math.random() * FILLER_PHRASES[FILLER_PHRASES.length - 1].texts.length)];
       const lower = text.toLowerCase();
-      let best = { phrase: FILLER_PHRASES[FILLER_PHRASES.length - 1].text, score: 0 };
+      let best = { category: null, score: 0 };
       for (const f of FILLER_PHRASES) {
         if (f.keywords.length === 0) continue;
         let score = 0;
         for (const kw of f.keywords) {
           if (lower.includes(kw)) score++;
         }
-        if (score > best.score) best = { phrase: f.text, score };
+        if (score > best.score) best = { category: f, score };
       }
-      return best.phrase;
+      const target = best.category || FILLER_PHRASES[FILLER_PHRASES.length - 1];
+      return target.texts[Math.floor(Math.random() * target.texts.length)];
     }
 
     function normalise(s) {
