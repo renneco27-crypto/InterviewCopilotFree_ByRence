@@ -156,34 +156,6 @@
 
     .empty-state { color: #606068; font-size: 14px; text-align: center; }
 
-    /* ── Filler Display ── */
-    .filler-display {
-      flex-shrink: 0;
-      padding: 16px 20px;
-      background: rgba(99, 102, 241, 0.08);
-      border-top: 1px solid rgba(99, 102, 241, 0.15);
-      border-bottom: 1px solid rgba(99, 102, 241, 0.15);
-      text-align: center;
-      display: none;
-      animation: fadeIn 0.2s ease-in;
-    }
-    .filler-display.show { display: block; }
-    .filler-label {
-      font-size: 9px;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: #6366f1;
-      font-weight: 700;
-      margin-bottom: 6px;
-    }
-    .filler-text {
-      font-size: 18px;
-      line-height: 1.6;
-      color: #e0e0ff;
-      font-weight: 500;
-      text-shadow: 0 0 12px rgba(99, 102, 241, 0.12);
-    }
-
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
     .floating-container.minimized .ai-response-display { display: none; }
@@ -566,11 +538,7 @@
 
 
 
-    <div class="filler-display" id="fillerDisplay">
-      <div class="filler-label">Filler</div>
-      <div class="filler-text" id="fillerText"></div>
-    </div>
-
+    
     <div class="live-transcript" id="liveTranscript">
       <div id="liveEntries"></div>
       <div class="live-interim" id="liveInterim"></div>
@@ -748,7 +716,7 @@
     // ── Filler phrases (keyword-matched, zero-latency stall talk) ─────────
     const FILLER_PHRASES = [
       {
-        keywords: ['experience','background','role','job','company','last role','career','position','responsibility','history'],
+        keywords: ['experience','background','role','job','company','last role','career','position','responsibility','history','yourself','tell me about'],
         texts: [
           "That brings back a specific project from my time in my last role, where we...",
           "When looking back at my overall background, this is something I've spent a lot of time on, particularly because...",
@@ -910,11 +878,11 @@
 
     function isInterviewPrompt(text) {
       const t = text.trim();
-      if (t.length < 8) return false;
-      if (t.endsWith('?')) return true;
-      if (/^(i see|that makes sense|got it|sounds good|fair enough|understood|ok|right|makes sense|cool)\b/i.test(t)) return false;
-      const openers = /^(let's|lets|break down|take me|take us|run me|run us|i'd like|i would like|tell|describe|walk|give|explain|sell|detail|outline|share|discuss|illustrate|analyze|narrate|recall|define|evaluate|clarify|summarize|identify|justify|talk|imagine|suppose|consider|elaborate|provide|demonstrate|list|compare|contrast|state|highlight|mention|pitch|assume|run|help me|can you|could you|what|why|how|when|where|who)\b/i;
+      const openers = /\b(let's|lets|break down|take me|take us|run me|run us|i'd like|i would like|tell|describe|walk|give|explain|sell|detail|outline|share|discuss|illustrate|analyze|narrate|recall|define|evaluate|clarify|summarize|identify|justify|talk|imagine|suppose|consider|elaborate|provide|demonstrate|list|compare|contrast|state|highlight|mention|pitch|assume|run|help me|can you|could you|what|why|how|when|where|who)\b/i;
       if (openers.test(t)) return true;
+      if (t.endsWith('?')) return true;
+      if (t.length < 8) return false;
+      if (/^(i see|that makes sense|got it|sounds good|fair enough|understood|ok|right|makes sense|cool)\b/i.test(t)) return false;
       return false;
     }
 
@@ -1005,21 +973,12 @@
     }
 
     function displayResponse(speaker, text) {
-      clearFiller();
       setStatus('ready');
     }
 
     function showFiller(text) {
-      const el = document.getElementById('fillerText');
-      const container = document.getElementById('fillerDisplay');
-      if (!el || !container) return;
-      el.textContent = text;
-      container.classList.add('show');
-    }
-
-    function clearFiller() {
-      const container = document.getElementById('fillerDisplay');
-      if (container) container.classList.remove('show');
+      addTranscriptEntry({ speaker: 'AI', text, type: 'ai-response' });
+      updateLiveTranscript();
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1255,25 +1214,23 @@
             // Append this sentence to the running buffer (space-separated)
             relayBuffer = relayBuffer ? relayBuffer + ' ' + text : text;
 
-            if (endsWithQuestion) {
-              // Show filler immediately — zero-latency stall talk while AI thinks
-              showFiller(matchFiller(text));
+            // Show filler immediately — zero-latency stall talk while AI thinks
+            showFiller(matchFiller(text));
 
-              // Cancel any pending timer — we'll start a fresh 2s window
-              if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
+            // Cancel any pending timer — we'll start a fresh 2s window
+            if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
 
-              const frozenText   = relayBuffer;
-              const frozenSysMsg = earlyClassification?.systemMsg || null;
+            const frozenText   = relayBuffer;
+            const frozenSysMsg = earlyClassification?.systemMsg || null;
 
-              console.log('[Relay:buffer] Question mark detected — waiting 2s before AI. Buffer=«' + frozenText.substring(0, 80) + '»');
+            console.log('[Relay:buffer] ' + (endsWithQuestion ? 'Question mark detected' : 'Prompt detected (no ?)') + ' — waiting 2s before AI. Buffer=«' + frozenText.substring(0, 80) + '»');
 
-              relayAITimer = setTimeout(() => {
-                relayAITimer = null;
-                relayBuffer  = '';
-                console.log('[Relay:buffer] 2s elapsed — sending to AI: «' + frozenText.substring(0, 80) + '»');
-                triggerAI(frozenText, frozenSysMsg);
-              }, 2000);
-            }
+            relayAITimer = setTimeout(() => {
+              relayAITimer = null;
+              relayBuffer  = '';
+              console.log('[Relay:buffer] 2s elapsed — sending to AI: «' + frozenText.substring(0, 80) + '»');
+              triggerAI(frozenText, frozenSysMsg);
+            }, 2000);
           }
         }
       };
