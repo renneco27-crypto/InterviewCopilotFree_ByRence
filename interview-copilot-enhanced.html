@@ -793,8 +793,11 @@ function startListening() {
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
       if (e.results[i].isFinal) {
-        addTranscriptEntry({ speaker: 'Interviewer', text: t.trim(), type: 'interviewer' });
-        if (isQuestion(t.trim())) triggerAI(t.trim());
+        const trimmed = t.trim();
+        if (isQuestion(trimmed)) {
+          addTranscriptEntry({ speaker: 'Interviewer', text: trimmed, type: 'interviewer' });
+          triggerAI(trimmed);
+        }
       } else {
         interim += t;
       }

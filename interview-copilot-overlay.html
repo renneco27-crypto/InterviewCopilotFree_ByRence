@@ -799,9 +799,9 @@
       const t = text.trim();
       if (t.length < 8) return false;
       if (t.endsWith('?')) return true;
-      const openers = /^(tell|describe|walk|give|explain|sell|detail|outline|share|discuss|illustrate|analyze|narrate|recall|define|evaluate|clarify|summarize|identify|justify|talk|help me|can you|could you|what|why|how|when|where|who)\b/i;
+      if (/^(i see|that makes sense|got it|sounds good|fair enough|understood|ok|right|makes sense|cool)\b/i.test(t)) return false;
+      const openers = /^(let's|lets|break down|take me|take us|run me|run us|i'd like|i would like|tell|describe|walk|give|explain|sell|detail|outline|share|discuss|illustrate|analyze|narrate|recall|define|evaluate|clarify|summarize|identify|justify|talk|imagine|suppose|consider|elaborate|provide|demonstrate|list|compare|contrast|state|highlight|mention|pitch|assume|run|help me|can you|could you|what|why|how|when|where|who)\b/i;
       if (openers.test(t)) return true;
-      if (t.length > 40 && /[.!]$/.test(t)) return true;
       return false;
     }
 
@@ -1099,46 +1099,40 @@
             return;
           }
 
-          // ── Final: full sentence — always display; only queue AI when '?' detected ──
-          // Non-'?' sentences are accumulated in relayBuffer and shown in the
-          // transcript so the relay keeps listening without interruption.
-          // When a sentence ending with '?' arrives we arm a 2-second hold-off
-          // timer before sending the buffered text to the AI — giving the
-          // interviewer time to finish their thought. A subsequent '?' sentence
-          // before the timer fires cancels the old timer and restarts the 2s wait.
+          // ── Final: full sentence — only show prompts/questions and only answer questions ──
           const endsWithQuestion = /[?]$/.test(text.trim());
-          console.log('[Relay:final] endsWithQuestion=' + endsWithQuestion + ' text=«' + text + '»');
+          const isPrompt = isInterviewPrompt(text);
+          console.log('[Relay:final] endsWithQuestion=' + endsWithQuestion + ' isPrompt=' + isPrompt + ' text=«' + text + '»');
 
           document.getElementById('liveInterim').textContent = '';
           resetEarlyClassification();
-          addTranscriptEntry({ speaker: 'Interviewer', text, type: 'interviewer' });
-          addTranscriptLine('Interviewer', text.substring(0, 80) + (text.length > 80 ? '...' : ''));
-          updateLiveTranscript();
-          closePanel();
 
-          // Append this sentence to the running buffer (space-separated)
-          relayBuffer = relayBuffer ? relayBuffer + ' ' + text : text;
+          if (isPrompt) {
+            addTranscriptEntry({ speaker: 'Interviewer', text, type: 'interviewer' });
+            addTranscriptLine('Interviewer', text.substring(0, 80) + (text.length > 80 ? '...' : ''));
+            updateLiveTranscript();
+            closePanel();
 
-          if (endsWithQuestion) {
-            // Cancel any pending timer — we'll start a fresh 2s window
-            if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
+            // Append this sentence to the running buffer (space-separated)
+            relayBuffer = relayBuffer ? relayBuffer + ' ' + text : text;
 
-            // Snapshot the buffer and early classification at this moment;
-            // capture them in the closure so a later sentence can't clobber them.
-            const frozenText   = relayBuffer;
-            const frozenSysMsg = earlyClassification?.systemMsg || null;
+            if (endsWithQuestion) {
+              // Cancel any pending timer — we'll start a fresh 2s window
+              if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
 
-            console.log('[Relay:buffer] Question mark detected — waiting 2s before AI. Buffer=«' + frozenText.substring(0, 80) + '»');
+              const frozenText   = relayBuffer;
+              const frozenSysMsg = earlyClassification?.systemMsg || null;
 
-            relayAITimer = setTimeout(() => {
-              relayAITimer = null;
-              relayBuffer  = '';   // reset buffer after dispatching
-              console.log('[Relay:buffer] 2s elapsed — sending to AI: «' + frozenText.substring(0, 80) + '»');
-              triggerAI(frozenText, frozenSysMsg);
-            }, 2000);
+              console.log('[Relay:buffer] Question mark detected — waiting 2s before AI. Buffer=«' + frozenText.substring(0, 80) + '»');
+
+              relayAITimer = setTimeout(() => {
+                relayAITimer = null;
+                relayBuffer  = '';
+                console.log('[Relay:buffer] 2s elapsed — sending to AI: «' + frozenText.substring(0, 80) + '»');
+                triggerAI(frozenText, frozenSysMsg);
+              }, 2000);
+            }
           }
-          // Non-'?' sentences: buffer updated above, no timer started — relay
-          // stays connected and keeps listening for the rest of the question.
         }
       };
 
@@ -1211,12 +1205,15 @@
           if (e.results[i].isFinal) {
             if (!recognitionMuted && !isMuted && !relayActive) {
               // Relay not connected — local recognition is the only source, use it
-              addTranscriptEntry({ speaker: 'Interviewer', text: t.trim(), type: 'interviewer' });
-              addTranscriptLine('You', t.trim().substring(0, 80) + (t.trim().length > 80 ? '...' : ''));
-              updateLiveTranscript();
-              closePanel();
-              if (isQuestion(t.trim())) triggerAI(t.trim());
-              sendTranscript(t.trim(), true);
+              const trimmed = t.trim();
+              if (isInterviewPrompt(trimmed)) {
+                addTranscriptEntry({ speaker: 'Interviewer', text: trimmed, type: 'interviewer' });
+                addTranscriptLine('You', trimmed.substring(0, 80) + (trimmed.length > 80 ? '...' : ''));
+                updateLiveTranscript();
+                closePanel();
+                if (isQuestion(trimmed)) triggerAI(trimmed);
+              }
+              sendTranscript(trimmed, true);
             }
             // Relay active: relay onmessage handles transcript/AI — skip here
           } else {
