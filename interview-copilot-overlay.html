@@ -1114,6 +1114,7 @@
     let mixedDest = null;
     let recognitionMuted = false;
     let isMuted = false;
+    let shortMergeBuffer = '';
 
     function sendTranscript(text, isFinal) {
       if (relaySocket?.readyState === WebSocket.OPEN)
@@ -1165,9 +1166,9 @@
             return;
           }
 
-          const text    = msg.text.trim();
-          const speaker = msg.speaker || 'interviewer'; // 'you' | 'interviewer'
-          const phase   = msg.phase   || 'interim';     // 1 | 2 | 'interim' | 'final'
+           let text    = msg.text.trim();
+           const speaker = msg.speaker || 'interviewer'; // 'you' | 'interviewer'
+           const phase   = msg.phase   || 'interim';     // 1 | 2 | 'interim' | 'final'
           // Treat as final if: isFinal flag is true, OR phase is 'final', OR
           // the relay didn't send either field (older relay versions send no phase/isFinal)
           const isFinal = msg.isFinal === true || phase === 'final' ||
@@ -1224,6 +1225,19 @@
             return;
           }
 
+          // ── Short-phrase merge: buffer <4 word utterances, prepend when enough arrives ──
+          const wc = text.split(/\s+/).length;
+          if (wc < 4 && !text.endsWith('?')) {
+            shortMergeBuffer = shortMergeBuffer ? shortMergeBuffer + ' ' + text : text;
+            console.log('[Relay:merge] Buffered short (' + wc + 'w): «' + shortMergeBuffer + '»');
+            return;
+          }
+          if (shortMergeBuffer) {
+            text = shortMergeBuffer + ' ' + text;
+            shortMergeBuffer = '';
+            console.log('[Relay:merge] Prepended: «' + text.substring(0, 80) + '»');
+          }
+
           // ── Final: full sentence — only show prompts/questions and only answer questions ──
           const endsWithQuestion = /[?]$/.test(text.trim());
           const isPrompt = isInterviewPrompt(text);
@@ -1269,6 +1283,7 @@
         clearInterval(relayPingInterval);
         if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
         relayBuffer = '';
+        shortMergeBuffer = '';
         relaySocket = null;
         setTimeout(connectRelay, 5000);
       };
@@ -1333,7 +1348,17 @@
           if (e.results[i].isFinal) {
             if (!recognitionMuted && !isMuted && !relayActive) {
               // Relay not connected — local recognition is the only source, use it
-              const trimmed = t.trim();
+              let trimmed = t.trim();
+              // Merge short phrases (<4 words) into buffer, prepend when enough arrives
+              const lwc = trimmed.split(/\s+/).length;
+              if (lwc < 4 && !trimmed.endsWith('?')) {
+                shortMergeBuffer = shortMergeBuffer ? shortMergeBuffer + ' ' + trimmed : trimmed;
+                continue;
+              }
+              if (shortMergeBuffer) {
+                trimmed = shortMergeBuffer + ' ' + trimmed;
+                shortMergeBuffer = '';
+              }
               if (isInterviewPrompt(trimmed)) {
                 addTranscriptEntry({ speaker: 'Interviewer', text: trimmed, type: 'interviewer' });
                 addTranscriptLine('You', trimmed.substring(0, 80) + (trimmed.length > 80 ? '...' : ''));
@@ -1401,6 +1426,7 @@
       clearInterval(relayPingInterval);
       if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
       relayBuffer = '';
+      shortMergeBuffer = '';
       if (relaySocket) { relaySocket.close(); relaySocket = null; }
       setStatus('ready');
       document.getElementById('btnStart').disabled = false;
