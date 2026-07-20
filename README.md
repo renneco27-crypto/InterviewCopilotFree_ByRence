@@ -1,3 +1,5 @@
+pnpm start
+
 # Interview Copilot
 
 Real-time interview assistant that runs as a transparent, always-on-top Electron overlay. Captures your microphone (and optional system audio), transcribes speech using Web Speech API, and queries AI models for suggested answers — all while keeping the window hidden from screen recorders.
