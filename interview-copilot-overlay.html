@@ -688,6 +688,15 @@
     let transcriptEntries = [];
     let editingEntryEl = null;
 
+    document.addEventListener('click', function (e) {
+      if (!editingEntryEl) return;
+      const entriesContainer = document.getElementById('entries');
+      if (entriesContainer && !entriesContainer.contains(e.target)) {
+        editingEntryEl.contentEditable = 'false';
+        editingEntryEl = null;
+      }
+    });
+
     // ── Relay sentence buffer + question-mark–gated AI delay ─────────────
     // Sentences arriving from the relay are accumulated here until one ends
     // with '?'. At that point we arm a 2-second timer; if no new '?' sentence
