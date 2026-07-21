@@ -833,6 +833,14 @@
       // Still inside suppress window (continuous relay segments = still reading)
       if (Date.now() < selfReadSuppressUntil) return true;
 
+      // Word-overlap similarity — >=70% of incoming words appear in AI response
+      const aiWords = new Set(normAI.split(/\s+/));
+      let matchCount = 0;
+      for (const w of words) {
+        if (aiWords.has(w) && w.length > 1) matchCount++;
+      }
+      if (words.length > 0 && (matchCount / words.length) >= 0.7) return true;
+
       return false;
     }
 
