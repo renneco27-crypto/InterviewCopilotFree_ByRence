@@ -799,6 +799,7 @@
       },
     ];
     let fillerActive = false;
+    let fillerText = '';
 
     function matchFiller(text) {
       if (!text) return FILLER_PHRASES[FILLER_PHRASES.length - 1].texts[Math.floor(Math.random() * FILLER_PHRASES[FILLER_PHRASES.length - 1].texts.length)];
@@ -1008,6 +1009,7 @@
     }
 
     function showFiller(text) {
+      fillerText = text;
       addTranscriptEntry({ speaker: 'AI', text, type: 'ai-response' });
     }
 
@@ -1427,6 +1429,7 @@
     function stopListening() {
       isListening = false;
       fillerActive = false;
+      fillerText = '';
       if (window.electronAPI?.stopPhoneMic) window.electronAPI.stopPhoneMic();
       if (window.electronAPI?.killOrphanRelay) window.electronAPI.killOrphanRelay();
       if (recognition) { try { recognition.stop(); } catch {} recognition = null; }
@@ -1691,17 +1694,40 @@
       closePanel();
       setStatus('thinking');
       try {
+        // Inject filler text as a seamless-start instruction if present
+        const userMsg = fillerText
+          ? question + '\n\nContinue seamlessly from this exact opening without repeating it: "' + fillerText + '"'
+          : question;
         // Use pre-classified systemMsg if available (built during interim phase)
         // — falls back to building it now if early classification didn't run.
         const systemMsg = prebuiltSystemMsg || buildSystemMsg(
           "Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.",
           question
         );
-        const { response, usedModel } = await callAIModelWithFallback(question, systemMsg, currentModel);
-        markAIResponseSpoken(response); // arm self-read suppression before display
-        displayResponse(MODELS[usedModel].name, response);
-        addTranscriptLine('AI', response.substring(0, 80) + (response.length > 80 ? '...' : ''));
-        addTranscriptEntry({ speaker: 'AI (' + MODELS[usedModel].name + ')', text: response, type: 'ai-response' });
+        const { response, usedModel } = await callAIModelWithFallback(userMsg, systemMsg, currentModel);
+        // Strip filler prefix from response if the AI repeated it
+        let finalResponse = response;
+        if (fillerText) {
+          if (response.startsWith(fillerText)) {
+            finalResponse = response.substring(fillerText.length).trim();
+          } else {
+            const fw = fillerText.split(/\s+/);
+            const rw = response.split(/\s+/);
+            let overlap = 0;
+            for (let i = 0; i < Math.min(fw.length, rw.length); i++) {
+              if (fw[i].toLowerCase() === rw[i].toLowerCase()) overlap++;
+              else break;
+            }
+            if (overlap >= Math.max(3, Math.floor(fw.length * 0.7))) {
+              finalResponse = rw.slice(overlap).join(' ');
+            }
+          }
+          fillerText = '';
+        }
+        markAIResponseSpoken(finalResponse); // arm self-read suppression before display
+        displayResponse(MODELS[usedModel].name, finalResponse);
+        addTranscriptLine('AI', finalResponse.substring(0, 80) + (finalResponse.length > 80 ? '...' : ''));
+        addTranscriptEntry({ speaker: 'AI (' + MODELS[usedModel].name + ')', text: finalResponse, type: 'ai-response' });
         updateLiveTranscript();
         setStatus('ready');
       } catch (err) {
@@ -1713,6 +1739,7 @@
         // so the app never gets permanently stuck in aiRunning=true.
         aiRunning = false;
         fillerActive = false;
+        fillerText = '';
       }
     }
 
@@ -1732,6 +1759,7 @@
         setStatus('ready');
       } finally {
         fillerActive = false;
+        fillerText = '';
       }
     }
 
