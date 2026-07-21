@@ -1533,57 +1533,55 @@
 
     // ─────────────────────────────────────────────────────────────────────
     // CONTEXT RELEVANCE FILTER
-    // Scans WH-words from the question and returns only the lines from the
-    // context blob that actually contain those keywords — so the AI only
-    // gets the slice it needs instead of the full context every time.
-    // Falls back to the full context when nothing relevant is found.
-    // This runs AFTER the existing includeCtx / activeCtxId guardrails.
+    // Extracts word windows (±10/+20) around keyword occurrences in the
+    // context for any question keyword that also appears in the context.
+    // Merges overlapping windows — the more keywords cluster in one region
+    // the tighter the extracted context. Falls back to full context when
+    // no keyword matches are found in the context text.
     // ─────────────────────────────────────────────────────────────────────
     function extractRelevantContext(question, ctxText) {
       if (!question || !ctxText) return ctxText;
 
-      // 1. Pull WH-words and their immediate neighbours from the question
-      const WH_PATTERN = /\b(what|who|when|where|why|how|which)\b/gi;
-      const whMatches = [...question.matchAll(WH_PATTERN)];
-      if (whMatches.length === 0) return ctxText; // no WH-words → full context
+      const KEYWORDS = [
+        'tell','describe','walk','give','explain','sell','detail','outline',
+        'share','discuss','illustrate','analyze','narrate','recall','define',
+        'evaluate','clarify','summarize','identify','justify','talk','imagine',
+        'suppose','consider','elaborate','provide','demonstrate','list','compare',
+        'contrast','state','highlight','mention','pitch','assume','run','introduce',
+        'what','why','how','when','where','who'
+      ];
 
-      // 2. Build a set of search terms:
-      //    • the WH-word itself
-      //    • up to 2 "content" words that follow each WH-word (skip stop-words)
-      const STOP = new Set(['a','an','the','is','are','was','were','be','been','being',
-                            'do','does','did','to','of','in','on','at','for','and','or',
-                            'i','you','he','she','it','we','they','my','your','his','her',
-                            'its','our','their','me','him','us','them','this','that']);
+      const lowerQ = question.toLowerCase();
+      const matched = KEYWORDS.filter(kw =>
+        new RegExp('\\b' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(lowerQ)
+      );
+      if (matched.length === 0) return ctxText;
 
-      const questionWords = question.toLowerCase().replace(/[^a-z0-9 ]/g,'').split(/\s+/);
-      const searchTerms = new Set();
+      const ctxWords = ctxText.split(/\s+/);
+      const lowerCtxWords = ctxText.toLowerCase().split(/\s+/);
+      const ranges = [];
 
-      whMatches.forEach(m => {
-        const wh = m[1].toLowerCase();
-        searchTerms.add(wh);
-        // find the index of this WH-word in questionWords and grab content words after it
-        const idx = questionWords.indexOf(wh, Math.max(0, questionWords.indexOf(wh)));
-        let picked = 0;
-        for (let i = idx + 1; i < questionWords.length && picked < 2; i++) {
-          const w = questionWords[i];
-          if (w.length > 2 && !STOP.has(w)) { searchTerms.add(w); picked++; }
+      for (const kw of matched) {
+        for (let i = 0; i < lowerCtxWords.length; i++) {
+          const clean = lowerCtxWords[i].replace(/[^a-z0-9]/g, '');
+          if (clean !== kw) continue;
+          const start = Math.max(0, i - 10);
+          const end   = Math.min(ctxWords.length, i + 1 + 20);
+          // Merge with existing overlapping range
+          const overlap = ranges.findIndex(r => r.start < end && r.end > start);
+          if (overlap !== -1) {
+            ranges[overlap].start = Math.min(ranges[overlap].start, start);
+            ranges[overlap].end   = Math.max(ranges[overlap].end, end);
+          } else {
+            ranges.push({ start, end });
+          }
         }
-      });
+      }
 
-      // 3. Score every line of the context: count how many search terms it contains
-      const lines = ctxText.split('\n');
-      const scored = lines.map(line => {
-        const lower = line.toLowerCase();
-        let score = 0;
-        searchTerms.forEach(term => { if (lower.includes(term)) score++; });
-        return { line, score };
-      });
+      if (ranges.length === 0) return ctxText;
 
-      // 4. Keep lines with at least one keyword hit
-      const relevant = scored.filter(l => l.score > 0).map(l => l.line);
-
-      // 5. Fallback: if nothing matched, send the full context so the AI is never left empty
-      return relevant.length > 0 ? relevant.join('\n') : ctxText;
+      ranges.sort((a, b) => a.start - b.start);
+      return ranges.map(r => ctxWords.slice(r.start, r.end).join(' ')).join('\n...\n');
     }
 
     function buildSystemMsg(base, question = '') {
