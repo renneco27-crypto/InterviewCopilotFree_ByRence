@@ -362,6 +362,7 @@
     .ctx-textarea:focus { border-color: rgba(99,102,241,0.5); }
     .ctx-textarea::placeholder { color:#606068; }
     .ctx-label { display:flex;align-items:center;gap:6px;margin:8px 0;font-size:12px;color:#aaa;cursor:pointer;-webkit-app-region:no-drag; }
+    #ctxToggleBtn { flex: none; }
     .ctx-label input { accent-color:#6366f1;-webkit-app-region:no-drag; }
     .ctx-actions { display:flex;gap:6px; }
     .ctx-btn { flex:1;padding:6px;border:none;border-radius:6px;font-size:12px;cursor:pointer;background:#2a2a2e;color:#ccc;-webkit-app-region:no-drag; }
@@ -616,7 +617,7 @@
       <select class="ctx-select" id="ctxSelect" onchange="switchContext()"></select>
       <textarea class="ctx-textarea" id="ctxText" placeholder="Paste interview context, background info, or notes..."></textarea>
       <div class="ctx-label" style="display:flex;gap:8px;align-items:center;">
-        <button class="ctx-btn" id="ctxToggleBtn" onclick="toggleActiveContext()" style="flex:1;">Enable</button>
+        <button class="ctx-btn" id="ctxToggleBtn" onclick="toggleActiveContext()">Enable</button>
         <span id="ctxStatus" style="font-size:11px;color:#606068;">—</span>
       </div>
       <div class="ctx-actions">
