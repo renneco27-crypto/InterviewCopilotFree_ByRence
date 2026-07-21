@@ -624,6 +624,10 @@
         <button class="ctx-btn" onclick="newContext()">+ New</button>
         <button class="ctx-btn danger" onclick="deleteContext()">🗑 Delete</button>
       </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06);">
+        <div style="font-size:11px;color:#606068;margin-bottom:4px;">Always-sent instruction (multiline):</div>
+        <textarea class="ctx-textarea" id="ctxInstruction" placeholder="*the words might be misheard, read it in context. speak professionally and with correct grammar*" style="min-height:50px;font-style:italic;"></textarea>
+      </div>
       <div class="panel-note">Esc to close</div>
     </div>
 
@@ -673,6 +677,7 @@
     // Context state
     let contextEntries = JSON.parse(localStorage.getItem('ctx_entries') || '[]');
     let activeCtxId = localStorage.getItem('ctx_active') || null;
+    let globalInstruction = localStorage.getItem('ctx_instruction') || '';
 
     // Speech state — WebSocket phone relay (Electron = receiver)
     let relaySocket = null;
@@ -1019,6 +1024,13 @@
 
     function closePanel() {
       if (activePanel) {
+        if (activePanel === 'context') {
+          const inst = document.getElementById('ctxInstruction');
+          if (inst) {
+            globalInstruction = inst.value.trim();
+            localStorage.setItem('ctx_instruction', globalInstruction);
+          }
+        }
         const el = document.getElementById('panel' + activePanel.charAt(0).toUpperCase() + activePanel.slice(1));
         if (el) el.classList.remove('open');
         activePanel = null;
@@ -1597,13 +1609,15 @@
     }
 
     function buildSystemMsg(base, question = '') {
+      let parts = [];
+      if (globalInstruction) parts.push(globalInstruction);
       const ctxText = getAllEnabledCtxText();
-      if (!ctxText) return base;
-
-      // NEW: filter context to only the lines relevant to this question
-      const filteredCtx = extractRelevantContext(question, ctxText);
-
-      return filteredCtx + '\n\n' + base;
+      if (ctxText) {
+        const filteredCtx = extractRelevantContext(question, ctxText);
+        parts.push(filteredCtx);
+      }
+      parts.push(base);
+      return parts.join('\n\n');
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -2039,6 +2053,8 @@
       // Init context panel
       renderCtxDropdown();
       if (activeCtxId) loadCtxText(activeCtxId);
+      const instEl = document.getElementById('ctxInstruction');
+      if (instEl) instEl.value = globalInstruction;
 
       // Load relay config from .env via preload, then auto-connect relay
       if (window.electronAPI?.getRelayConfig) {
