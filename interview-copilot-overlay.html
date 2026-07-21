@@ -615,10 +615,10 @@
       </div>
       <select class="ctx-select" id="ctxSelect" onchange="switchContext()"></select>
       <textarea class="ctx-textarea" id="ctxText" placeholder="Paste interview context, background info, or notes..."></textarea>
-      <label class="ctx-label">
-        <input type="checkbox" id="ctxToggle" onchange="onCtxToggle()">
-        Include context with query
-      </label>
+      <div class="ctx-label" style="display:flex;gap:8px;align-items:center;">
+        <button class="ctx-btn" id="ctxToggleBtn" onclick="toggleActiveContext()" style="flex:1;">Enable</button>
+        <span id="ctxStatus" style="font-size:11px;color:#606068;">—</span>
+      </div>
       <div class="ctx-actions">
         <button class="ctx-btn primary" onclick="saveContext()">Save</button>
         <button class="ctx-btn" onclick="newContext()">+ New</button>
@@ -673,7 +673,6 @@
     // Context state
     let contextEntries = JSON.parse(localStorage.getItem('ctx_entries') || '[]');
     let activeCtxId = localStorage.getItem('ctx_active') || null;
-    let includeCtx = localStorage.getItem('ctx_include') === 'true';
 
     // Speech state — WebSocket phone relay (Electron = receiver)
     let relaySocket = null;
@@ -1461,12 +1460,31 @@
       contextEntries.forEach(e => {
         const opt = document.createElement('option');
         opt.value = e.id;
-        opt.textContent = e.name;
+        opt.textContent = (e.enabled ? '' : '✕ ') + e.name;
         sel.appendChild(opt);
       });
       if (activeCtxId && contextEntries.some(e => e.id === activeCtxId)) {
         sel.value = activeCtxId;
       }
+      updateCtxToggleUI();
+    }
+
+    function updateCtxToggleUI() {
+      const btn = document.getElementById('ctxToggleBtn');
+      const status = document.getElementById('ctxStatus');
+      if (!btn || !status) return;
+      const entry = contextEntries.find(e => e.id === activeCtxId);
+      if (!entry) { btn.textContent = 'Enable'; status.textContent = '—'; return; }
+      btn.textContent = entry.enabled ? '✓ Enabled' : '✕ Disabled';
+      status.textContent = entry.enabled ? 'This context will be sent to AI' : 'This context will NOT be sent';
+    }
+
+    function toggleActiveContext() {
+      const entry = contextEntries.find(e => e.id === activeCtxId);
+      if (!entry) return;
+      entry.enabled = !entry.enabled;
+      persistCtx();
+      renderCtxDropdown();
     }
 
     function loadCtxText(id) {
@@ -1478,6 +1496,7 @@
       const sel = document.getElementById('ctxSelect');
       activeCtxId = sel.value || null;
       loadCtxText(activeCtxId);
+      updateCtxToggleUI();
       persistCtx();
     }
 
@@ -1486,7 +1505,7 @@
       if (!activeCtxId) {
         const id = Date.now().toString();
         const name = 'Context ' + (contextEntries.length + 1);
-        contextEntries.push({ id, name, text });
+        contextEntries.push({ id, name, text, enabled: true });
         activeCtxId = id;
       } else {
         const entry = contextEntries.find(e => e.id === activeCtxId);
@@ -1500,7 +1519,7 @@
     function newContext() {
       const id = Date.now().toString();
       const name = 'Context ' + (contextEntries.length + 1);
-      contextEntries.push({ id, name, text: '' });
+      contextEntries.push({ id, name, text: '', enabled: true });
       activeCtxId = id;
       persistCtx();
       renderCtxDropdown();
@@ -1520,15 +1539,8 @@
       showToast('Context deleted');
     }
 
-    function onCtxToggle() {
-      includeCtx = document.getElementById('ctxToggle').checked;
-      localStorage.setItem('ctx_include', includeCtx);
-    }
-
-    function getActiveCtxText() {
-      if (!activeCtxId) return '';
-      const entry = contextEntries.find(e => e.id === activeCtxId);
-      return entry ? entry.text.trim() : '';
+    function getAllEnabledCtxText() {
+      return contextEntries.filter(e => e.enabled && e.text.trim()).map(e => e.text.trim()).join('\n\n');
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1585,8 +1597,7 @@
     }
 
     function buildSystemMsg(base, question = '') {
-      if (!includeCtx) return base;            // existing guardrail — untouched
-      const ctxText = getActiveCtxText();      // existing guardrail — untouched
+      const ctxText = getAllEnabledCtxText();
       if (!ctxText) return base;
 
       // NEW: filter context to only the lines relevant to this question
@@ -2028,7 +2039,6 @@
       // Init context panel
       renderCtxDropdown();
       if (activeCtxId) loadCtxText(activeCtxId);
-      document.getElementById('ctxToggle').checked = includeCtx;
 
       // Load relay config from .env via preload, then auto-connect relay
       if (window.electronAPI?.getRelayConfig) {
