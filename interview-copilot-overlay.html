@@ -686,6 +686,7 @@
     let relayPaused = false;
     let isListening = false;
     let transcriptEntries = [];
+    let editingEntryEl = null;
 
     // ── Relay sentence buffer + question-mark–gated AI delay ─────────────
     // Sentences arriving from the relay are accumulated here until one ends
@@ -1775,7 +1776,56 @@
       entriesContainer.appendChild(el);
       entriesContainer.scrollTop = entriesContainer.scrollHeight;
       // Stamp receive-time so updateLiveTranscript shows accurate timestamps
-      transcriptEntries.push({ ...entry, time: getNow() });
+      const entryObj = { ...entry, time: getNow() };
+      transcriptEntries.push(entryObj);
+
+      // Make interviewer entries editable — click to edit, Enter to re-answer
+      if (entry.type === 'interviewer') {
+        const textEl = el.querySelector('.entry-text');
+        textEl.style.cursor = 'text';
+        textEl.title = 'Click to edit, Enter to re-answer';
+
+        textEl.addEventListener('click', function () {
+          if (editingEntryEl && editingEntryEl !== this) {
+            editingEntryEl.contentEditable = 'false';
+          }
+          this.contentEditable = 'plaintext-only';
+          this.focus();
+          editingEntryEl = this;
+          const range = document.createRange();
+          range.selectNodeContents(this);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        });
+
+        textEl.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            this.contentEditable = 'false';
+            editingEntryEl = null;
+            const corrected = this.textContent.trim();
+            if (!corrected) return;
+
+            entryObj.text = corrected;
+            updateLiveTranscript();
+
+            // Remove the last AI response (answered the misheard version)
+            for (let i = transcriptEntries.length - 1; i >= 0; i--) {
+              if (transcriptEntries[i].type === 'ai-response') {
+                transcriptEntries.splice(i, 1);
+                break;
+              }
+            }
+            const aiEntries = entriesContainer.querySelectorAll('.entry.ai-response');
+            if (aiEntries.length > 0) aiEntries[aiEntries.length - 1].remove();
+
+            if (isInterviewPrompt(corrected)) {
+              queryAI(corrected);
+            }
+          }
+        });
+      }
     }
 
     function clearTranscript() {
