@@ -690,8 +690,11 @@
 
     document.addEventListener('click', function (e) {
       if (!editingEntryEl) return;
-      const entriesContainer = document.getElementById('entries');
-      if (entriesContainer && !entriesContainer.contains(e.target)) {
+      const entriesEl = document.getElementById('entries');
+      const liveEl = document.getElementById('liveEntries');
+      const insideEntries = entriesEl && entriesEl.contains(e.target);
+      const insideLive = liveEl && liveEl.contains(e.target);
+      if (!insideEntries && !insideLive) {
         editingEntryEl.contentEditable = 'false';
         editingEntryEl = null;
       }
@@ -1572,10 +1575,47 @@
       if (!c) return;
       const recent = transcriptEntries.slice(-5);
       c.innerHTML = recent.map(e =>
-        `<div class="live-entry"><span class="t">${e.time || new Date().toLocaleTimeString()}</span><span class="s ${e.type === 'ai-response' ? 'a' : 'i'}">${escHtml(e.speaker)}</span><span class="x">${escHtml(e.text)}</span></div>`
+        `<div class="live-entry"><span class="t">${e.time || new Date().toLocaleTimeString()}</span><span class="s ${e.type === 'ai-response' ? 'a' : 'i'}">${escHtml(e.speaker)}</span><span class="x"${e.type === 'interviewer' ? ' contenteditable="plaintext-only"' : ''}>${escHtml(e.text)}</span></div>`
       ).join('');
       c.parentElement.scrollTop = c.parentElement.scrollHeight;
     }
+
+    // Handle Enter on editable live transcript interviewer entries
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      const target = e.target;
+      if (!target.classList.contains('x') || target.contentEditable !== 'plaintext-only') return;
+      e.preventDefault();
+      target.contentEditable = 'false';
+      editingEntryEl = null;
+      const corrected = target.textContent.trim();
+      if (!corrected) return;
+
+      const liveEntry = target.closest('.live-entry');
+      const allEntries = [...document.querySelectorAll('#liveEntries .live-entry')];
+      const idx = allEntries.indexOf(liveEntry);
+      const liveOffset = transcriptEntries.length - allEntries.length;
+      const entryIdx = liveOffset + idx;
+      if (entryIdx < 0 || entryIdx >= transcriptEntries.length || transcriptEntries[entryIdx].type !== 'interviewer') return;
+
+      transcriptEntries[entryIdx].text = corrected;
+      updateLiveTranscript();
+
+      // Remove last AI response
+      for (let i = transcriptEntries.length - 1; i >= 0; i--) {
+        if (transcriptEntries[i].type === 'ai-response') {
+          transcriptEntries.splice(i, 1);
+          break;
+        }
+      }
+      const entriesContainer = document.getElementById('entries');
+      const aiEntries = entriesContainer.querySelectorAll('.entry.ai-response');
+      if (aiEntries.length > 0) aiEntries[aiEntries.length - 1].remove();
+
+      if (isInterviewPrompt(corrected)) {
+        queryAI(corrected);
+      }
+    });
 
     // ─────────────────────────────────────────────────────────────────────
     // AI QUERY
