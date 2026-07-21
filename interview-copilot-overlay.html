@@ -788,18 +788,39 @@
       {
         keywords: [],
         texts: [
-          "That's a crucial area to dive into, and looking at how I've approached it in practice...",
-          "I've spent a lot of time thinking about and working through that exact topic, particularly around...",
-          "There are a few key dimensions to how I look at that, but the most significant aspect is...",
-          "That aligns really closely with how I operate day-to-day, especially when considering...",
-          "To give you a complete picture on that, it's best to break it down into...",
-          "I have a couple of different insights on that based on past experience, starting with...",
-          "That's an excellent point to highlight, and the way I usually frame my perspective on it is...",
+          "Honestly, that's such a sharp question—it really gets to the core of how I approach...",
+          "In my experience, the real turning point with something like this is...",
+          "When it comes to handling [reiterate key topic], what really worked for me was...",
+          "That's a great callout—whenever I'm faced with [reiterate key topic], my immediate move is to...",
+          "I love that scenario. In situations where [reiterate key topic], what I actually did was...",
+          "Looking back at how I handled [reiterate key topic], the very first thing I tackled was...",
+          "That hits on something crucial. When I had to navigate [reiterate key topic], I stepped back and...",
+          "It's a tough spot to be in, but when I was dealing with [reiterate key topic], my approach was...",
+          "Honestly, whenever [reiterate key topic] comes up, the gameplan I follow is...",
+          "and looking back at how that played out on my last team...",
+          "When you're actually in the middle of a project like that...",
+          "it's one of those things that doesn't get talked about enough in...",
+          "it really gets to the core of how I approach",
         ],
       },
     ];
     let fillerActive = false;
     let fillerText = '';
+
+    function extractKeyTopic(text) {
+      if (!text) return '';
+      let t = text.trim().replace(/[?.!]+$/, '').trim();
+      t = t.replace(/^(?:can you|could you|tell me (?:about|how)|describe|walk me through|how (?:do|would|have) you|what (?:do|would|did) you(?: do)?|why (?:do|did) you|have you ever|when (?:have|did) you|are you|do you(?: have)?|what are your|what is your)\s+/i, '');
+      const triggers = /\b(?:when|if|about|handling?|navigating?|dealing?\s+with|managing?|regarding|concerning|for|with|after|during)\s+/i;
+      const matches = [...t.matchAll(new RegExp(triggers.source, 'gi'))];
+      let core = t;
+      if (matches.length > 0) {
+        const last = matches[matches.length - 1];
+        core = t.substring(last.index + last[0].length);
+      }
+      const words = core.split(/\s+/).slice(0, 8);
+      return words.join(' ').replace(/[?.!,;:]+$/, '').trim().toLowerCase();
+    }
 
     function matchFiller(text) {
       if (!text) return FILLER_PHRASES[FILLER_PHRASES.length - 1].texts[Math.floor(Math.random() * FILLER_PHRASES[FILLER_PHRASES.length - 1].texts.length)];
@@ -1008,9 +1029,14 @@
       setStatus('ready');
     }
 
-    function showFiller(text) {
-      fillerText = text;
-      addTranscriptEntry({ speaker: 'AI', text, type: 'ai-response' });
+    function showFiller(text, questionText) {
+      const topic = extractKeyTopic(questionText || '');
+      let displayText = text;
+      if (topic) {
+        displayText = text.replace(/\[reiterate key topic\]/gi, topic);
+      }
+      fillerText = displayText;
+      addTranscriptEntry({ speaker: 'AI', text: displayText, type: 'ai-response' });
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1214,7 +1240,7 @@
             classifyEarly(text);
             if (isInterviewPrompt(text) && !fillerActive) {
               fillerActive = true;
-              showFiller(matchFiller(text));
+              showFiller(matchFiller(text), text);
             }
             return;
           }
@@ -1226,7 +1252,7 @@
             document.getElementById('liveInterim').textContent = text;
             if (isInterviewPrompt(text) && !fillerActive) {
               fillerActive = true;
-              showFiller(matchFiller(text));
+              showFiller(matchFiller(text), text);
             }
             return;
           }
@@ -1264,7 +1290,7 @@
             // Show filler only if not already triggered during interim
             if (!fillerActive) {
               fillerActive = true;
-              showFiller(matchFiller(text));
+              showFiller(matchFiller(text), text);
             }
 
             // Cancel any pending timer — we'll start a fresh 2s window
@@ -1375,7 +1401,7 @@
                 if (isQuestion(trimmed)) {
                   if (!fillerActive) {
                     fillerActive = true;
-                    showFiller(matchFiller(trimmed));
+                    showFiller(matchFiller(trimmed), trimmed);
                   }
                   triggerAI(trimmed);
                 }
