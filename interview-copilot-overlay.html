@@ -729,53 +729,58 @@
     // ── Filler phrases (keyword-matched, zero-latency stall talk) ─────────
     const FILLER_PHRASES = [
       {
-        keywords: ['experience','background','role','job','company','last role','career','position','responsibility','history','yourself','tell me about'],
-        texts: [
-          "That brings back a specific project from my time in my last role, where we...",
-          "When looking back at my overall background, this is something I've spent a lot of time on, particularly because...",
-          "Throughout my career, I've had several opportunities to focus on this, and what stands out most is...",
-          "In my previous position, this was actually a core part of my day-to-day responsibilities, especially when...",
-          "That's been a central theme in my professional history, and the way I usually outline it is...",
-          "Reflecting on my time with my former company, a really relevant example that springs to mind is...",
-          "I've had direct ownership over that area in past roles, and the main lesson I took from it was...",
-        ],
+        keywords: ['tell me about','introduce','walk me through'],
+        texts: ["Certainly, I'd be happy to share a brief overview of my background, experiences, and what I can bring to this role."]
       },
       {
-        keywords: ['handle','approach','situation','scenario','tackle','deal with','manage','execute','navigate','respond'],
-        texts: [
-          "The way I typically approach that kind of scenario stems from my work on previous projects, where...",
-          "Whenever I've had to deal with a dynamic like that, my first priority has always been to...",
-          "I've navigated similar situations in the past, and the strategy that yielded the best result was...",
-          "My initial reaction when managing that type of task is to immediately step back and look at...",
-          "The framework I rely on when tackling that specific issue usually starts with...",
-          "In terms of execution, I've found that responding effectively to that comes down to...",
-          "I recall a specific scenario where I had to handle something nearly identical, and the way it played out was...",
-        ],
+        keywords: ['why did you','why do you','why are you interested'],
+        texts: ["That's a great question, and I believe my interest comes from my goals, experiences, and the opportunity to contribute."]
       },
       {
-        keywords: ['challenge','difficult','problem','issue','obstacle','conflict','mistake','failure','blocker','setback'],
-        texts: [
-          "I've encountered a situation exactly like that before, and the first thing I had to figure out was...",
-          "When faced with that kind of obstacle, my primary focus is to break the problem down by...",
-          "That was definitely a major learning curve for me earlier on, and the way I resolved the issue was...",
-          "Handling difficult roadblocks like that usually requires balancing immediate triage with long-term fixes, starting with...",
-          "I actually dealt with a similar setback during a high-stakes initiative, where the core issue was...",
-          "Whenever a conflict or blocker like that arises, I make it a point to address it directly by...",
-          "That type of challenge comes up periodically, and my proven approach for turning it around involves...",
-        ],
+        keywords: ['what are your','what is your','what would you say'],
+        texts: ["I'd say this comes from the experiences I've gained and the lessons I've learned throughout my journey."]
       },
       {
-        keywords: ['strategy','process','method','framework','plan','system','workflow','structure','prioritize','decision'],
-        texts: [
-          "Over the course of my career, my strategy for handling this has evolved, but the core foundation usually starts with...",
-          "I actually built out a standardized workflow for this in a previous role, which focused primarily on...",
-          "My decision-making process in those circumstances is pretty structured, beginning with...",
-          "The method I find most effective for prioritizing tasks in that environment revolves around...",
-          "When designing a plan to address that, I always make sure the system accounts for...",
-          "The general framework I apply here has three distinct phases, starting with...",
-          "Establishing a reliable process for that was a major goal of mine recently, and it centered on...",
-        ],
+        keywords: ['how do you','how would you','how have you'],
+        texts: ["Based on my experience, I approach this by focusing on a clear process and finding practical solutions."]
       },
+      {
+        keywords: ['describe','give me an example','can you share'],
+        texts: ["One experience that comes to mind is a situation where I was able to learn and contribute."]
+      },
+      {
+        keywords: ['tell me about a time'],
+        texts: ["One situation that helped me grow was when I faced a challenge and worked toward a solution."]
+      },
+      {
+        keywords: ['where do you see yourself','where would you like'],
+        texts: ["Looking ahead, I see myself continuing to develop my skills and contribute to meaningful work."]
+      },
+      {
+        keywords: ['when have you','when did you'],
+        texts: ["One example that comes to mind was during my previous experience, where I learned an important lesson."]
+      },
+      {
+        keywords: ['are you comfortable','are you willing','are you'],
+        texts: ["Absolutely, I'm open and willing to adapt based on what the role requires."]
+      },
+      {
+        keywords: ['do you have','do you'],
+        texts: ["Yes, I do have experience with that, and I would be happy to share how I approached it."]
+      },
+      {
+        keywords: ['have you ever','have you'],
+        texts: ["Yes, I have encountered a similar situation, and it helped me improve my approach."]
+      },
+      {
+        keywords: ['can you explain','can you walk me through'],
+        texts: ["Certainly, I'd be happy to explain the process and my experience with it."]
+      },
+      {
+        keywords: ['what is your expected','what are your expectations'],
+        texts: ["At this stage, my main focus is gaining experience, improving my skills, and contributing to the team."]
+      },
+      // Generic fallback
       {
         keywords: [],
         texts: [
@@ -789,6 +794,7 @@
         ],
       },
     ];
+    let fillerActive = false;
 
     function matchFiller(text) {
       if (!text) return FILLER_PHRASES[FILLER_PHRASES.length - 1].texts[Math.floor(Math.random() * FILLER_PHRASES[FILLER_PHRASES.length - 1].texts.length)];
@@ -1193,6 +1199,10 @@
           if (phase === 1) {
             console.log('[Relay:phase1] classifyEarly:', text);
             classifyEarly(text);
+            if (isInterviewPrompt(text) && !fillerActive) {
+              fillerActive = true;
+              showFiller(matchFiller(text));
+            }
             return;
           }
 
@@ -1201,6 +1211,10 @@
             console.log('[Relay:interim] showing in interim bar:', text.substring(0, 60));
             classifyEarly(text);
             document.getElementById('liveInterim').textContent = text;
+            if (isInterviewPrompt(text) && !fillerActive) {
+              fillerActive = true;
+              showFiller(matchFiller(text));
+            }
             return;
           }
 
@@ -1234,8 +1248,11 @@
             // Append this sentence to the running buffer (space-separated)
             relayBuffer = relayBuffer ? relayBuffer + ' ' + text : text;
 
-            // Show filler immediately — zero-latency stall talk while AI thinks
-            showFiller(matchFiller(text));
+            // Show filler only if not already triggered during interim
+            if (!fillerActive) {
+              fillerActive = true;
+              showFiller(matchFiller(text));
+            }
 
             // Cancel any pending timer — we'll start a fresh 2s window
             if (relayAITimer) { clearTimeout(relayAITimer); relayAITimer = null; }
@@ -1248,6 +1265,7 @@
             relayAITimer = setTimeout(() => {
               relayAITimer = null;
               relayBuffer  = '';
+              fillerActive = false;
               console.log('[Relay:buffer] 2s elapsed — sending to AI: «' + frozenText.substring(0, 80) + '»');
               triggerAI(frozenText, frozenSysMsg);
             }, 2000);
@@ -1342,7 +1360,10 @@
                 updateLiveTranscript();
                 closePanel();
                 if (isQuestion(trimmed)) {
-                  showFiller(matchFiller(trimmed));
+                  if (!fillerActive) {
+                    fillerActive = true;
+                    showFiller(matchFiller(trimmed));
+                  }
                   triggerAI(trimmed);
                 }
               }
@@ -1394,6 +1415,7 @@
 
     function stopListening() {
       isListening = false;
+      fillerActive = false;
       if (window.electronAPI?.stopPhoneMic) window.electronAPI.stopPhoneMic();
       if (window.electronAPI?.killOrphanRelay) window.electronAPI.killOrphanRelay();
       if (recognition) { try { recognition.stop(); } catch {} recognition = null; }
@@ -1667,6 +1689,7 @@
         // Always release the gate — even on network error or exception —
         // so the app never gets permanently stuck in aiRunning=true.
         aiRunning = false;
+        fillerActive = false;
       }
     }
 
@@ -1684,6 +1707,8 @@
       } catch (err) {
         displayResponse('Error', err.message);
         setStatus('ready');
+      } finally {
+        fillerActive = false;
       }
     }
 
