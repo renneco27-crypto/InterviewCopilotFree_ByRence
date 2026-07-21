@@ -1875,6 +1875,13 @@
           }
         });
       }
+
+      // Keep max 8 entries — remove oldest
+      const MAX_ENTRIES = 8;
+      while (transcriptEntries.length > MAX_ENTRIES) {
+        transcriptEntries.shift();
+        if (entriesContainer.firstChild) entriesContainer.firstChild.remove();
+      }
     }
 
     function clearTranscript() {
