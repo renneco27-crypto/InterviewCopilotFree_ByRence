@@ -1955,9 +1955,9 @@
         qaMatchResult.bestQuestion = qaMatchResult.bestQuestion || question;
 
         // High-confidence Q&A match — bypass AI entirely, show full answer
-        if (qaMatchResult.confidence >= 0.8) {
+        if (qaMatchResult.confidence >= 0.8 && qaMatchResult.bestAnswer.length >= 250) {
           const directAnswer = qaMatchResult.bestAnswer;
-          console.log(`[DEBUG:triggerAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%) — bypassing AI, using stored answer`);
+          console.log(`[DEBUG:triggerAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%, ${directAnswer.length} chars) — bypassing AI, using stored answer`);
           markAIResponseSpoken(directAnswer);
           displayResponse(MODELS[currentModel].name, directAnswer);
           addTranscriptLine('AI', directAnswer.substring(0, 80) + (directAnswer.length > 80 ? '...' : ''));
@@ -2027,9 +2027,9 @@
           if (ctxText) extractRelevantContext(userMessage, ctxText);
 
           // Bypass AI on high-confidence Q&A match — show full answer
-          if (qaMatchResult.confidence >= 0.8) {
+          if (qaMatchResult.confidence >= 0.8 && qaMatchResult.bestAnswer.length >= 250) {
             const directAnswer = qaMatchResult.bestAnswer;
-            console.log(`[DEBUG:queryAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%) — bypassing AI, using stored answer`);
+            console.log(`[DEBUG:queryAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%, ${directAnswer.length} chars) — bypassing AI, using stored answer`);
             markAIResponseSpoken(directAnswer);
             displayResponse(MODELS[startModelKey].name, directAnswer);
             addTranscriptLine(MODELS[startModelKey].name, directAnswer.substring(0, 60) + (directAnswer.length > 60 ? '...' : ''));
