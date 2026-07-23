@@ -1642,13 +1642,23 @@
 
     function parseQAPairs(ctxText) {
       const pairs = [];
-      const regex = /^\s*(\d+)\.\s+(.+?)\n([\s\S]+?)(?=\n\s*\d+\.\s|\s*$)/gm;
+      const blockRegex = /^\s*(\d+)\.\s+([\s\S]+?)(?=\n\s*\d+\.\s|\s*$)/gm;
       let match;
-      while ((match = regex.exec(ctxText)) !== null) {
+      while ((match = blockRegex.exec(ctxText)) !== null) {
+        const block = match[2].trim();
+        const firstNewline = block.indexOf('\n');
+        let question, answer;
+        if (firstNewline !== -1) {
+          question = block.substring(0, firstNewline).trim();
+          answer = block.substring(firstNewline).trim();
+        } else {
+          question = block;
+          answer = '';
+        }
         pairs.push({
           id: parseInt(match[1]),
-          question: match[2].trim(),
-          answer: match[3].trim()
+          question,
+          answer
         });
       }
       return pairs;
@@ -1792,7 +1802,7 @@
       return Math.min(1, score / maxPossible);
     }
 
-    function extractRelevantContext(question, ctxText) {
+    function extractRelevantContext(question, ctxText, maxChars = 0) {
       if (!question || !ctxText) {
         qaMatchResult = { bestAnswer: null, bestQuestion: null, confidence: 0 };
         return ctxText;
@@ -1830,18 +1840,31 @@
         console.log(`[DEBUG:extractQ&A] #${i+1} Q${p.id} score=${p.score}: "${p.question.substring(0, 60)}..."`);
       });
 
-      const result = top.map(p => `${p.question}\n${p.answer}`).join('\n\n---\n\n');
+      let result = top.map(p => `${p.question}\n${p.answer}`).join('\n\n---\n\n');
+
+      // Truncate when maxChars is set (saves tokens for <80% AI path)
+      if (maxChars > 0 && result.length > maxChars) {
+        const top1 = `${scored[0].question}\n${scored[0].answer}`;
+        if (top1.length <= maxChars) {
+          result = top1;
+        } else {
+          const avail = maxChars - scored[0].question.length - 1;
+          result = `${scored[0].question}\n${scored[0].answer.substring(0, Math.max(0, avail))}\n...(truncated)`;
+        }
+        console.log(`[DEBUG:extractQ&A] truncated to ${result.length} chars (max ${maxChars})`);
+      }
+
       console.log('[DEBUG:extractQ&A] total context length:', result.length, 'chars');
       return result;
     }
 
-    function buildSystemMsg(base, question = '') {
+    function buildSystemMsg(base, question = '', maxCtxChars = 0) {
       let parts = [];
       if (globalInstruction) parts.push(globalInstruction);
       const ctxText = getAllEnabledCtxText();
       let filteredCtx = '';
       if (ctxText) {
-        filteredCtx = extractRelevantContext(question, ctxText);
+        filteredCtx = extractRelevantContext(question, ctxText, maxCtxChars);
         parts.push(filteredCtx);
       }
       parts.push(base);
@@ -1926,16 +1949,12 @@
       closePanel();
       setStatus('thinking');
       try {
-        const systemMsg = prebuiltSystemMsg || buildSystemMsg(
-          "Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.",
-          question
-        );
-        // Ensure fresh qaMatchResult when prebuilt system message was used
-        if (prebuiltSystemMsg) {
-          const ctxText = getAllEnabledCtxText();
-          if (ctxText) extractRelevantContext(question, ctxText);
-        }
-        // High-confidence Q&A match — bypass AI entirely
+        // Always compute fresh qaMatchResult for accurate bypass check
+        const ctxText = getAllEnabledCtxText();
+        if (ctxText) extractRelevantContext(question, ctxText);
+        qaMatchResult.bestQuestion = qaMatchResult.bestQuestion || question;
+
+        // High-confidence Q&A match — bypass AI entirely, show full answer
         if (qaMatchResult.confidence >= 0.8) {
           const directAnswer = qaMatchResult.bestAnswer;
           console.log(`[DEBUG:triggerAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%) — bypassing AI, using stored answer`);
@@ -1947,6 +1966,13 @@
           setStatus('ready');
           return;
         }
+
+        // AI path — build system message with truncated context to save tokens
+        const systemMsg = buildSystemMsg(
+          "Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.",
+          question,
+          500
+        );
         // Inject filler text as a seamless-start instruction if present
         const userMsg = fillerText
           ? question + '\n\nContinue seamlessly from this exact opening without repeating it: "' + fillerText + '"'
@@ -1995,19 +2021,26 @@
     async function queryAI(userMessage, startModelKey = currentModel, systemMsgOverride = null) {
       setStatus('thinking');
       try {
-        const systemMsg = systemMsgOverride || buildSystemMsg("Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.", userMessage);
-        // Bypass AI on high-confidence Q&A match (only when buildSystemMsg was called)
-        if (!systemMsgOverride && qaMatchResult.confidence >= 0.8) {
-          const directAnswer = qaMatchResult.bestAnswer;
-          console.log(`[DEBUG:queryAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%) — bypassing AI, using stored answer`);
-          markAIResponseSpoken(directAnswer);
-          displayResponse(MODELS[startModelKey].name, directAnswer);
-          addTranscriptLine(MODELS[startModelKey].name, directAnswer.substring(0, 60) + (directAnswer.length > 60 ? '...' : ''));
-          addTranscriptEntry({ speaker: 'AI (' + MODELS[startModelKey].name + ')', text: directAnswer, type: 'ai-response' });
-          updateLiveTranscript();
-          setStatus('ready');
-          return;
+        // Compute fresh qaMatchResult for bypass check (only when buildSystemMsg will be called)
+        if (!systemMsgOverride) {
+          const ctxText = getAllEnabledCtxText();
+          if (ctxText) extractRelevantContext(userMessage, ctxText);
+
+          // Bypass AI on high-confidence Q&A match — show full answer
+          if (qaMatchResult.confidence >= 0.8) {
+            const directAnswer = qaMatchResult.bestAnswer;
+            console.log(`[DEBUG:queryAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%) — bypassing AI, using stored answer`);
+            markAIResponseSpoken(directAnswer);
+            displayResponse(MODELS[startModelKey].name, directAnswer);
+            addTranscriptLine(MODELS[startModelKey].name, directAnswer.substring(0, 60) + (directAnswer.length > 60 ? '...' : ''));
+            addTranscriptEntry({ speaker: 'AI (' + MODELS[startModelKey].name + ')', text: directAnswer, type: 'ai-response' });
+            updateLiveTranscript();
+            setStatus('ready');
+            return;
+          }
         }
+        // AI path — truncate context when buildSystemMsg is called
+        const systemMsg = systemMsgOverride || buildSystemMsg("Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.", userMessage, 500);
         console.log('[DEBUG:queryAI] userMessage:', userMessage);
         console.log('[DEBUG:queryAI] systemMsg length:', systemMsg.length, 'chars');
         const { response, usedModel } = await callAIModelWithFallback(userMessage, systemMsg, startModelKey);
