@@ -1694,32 +1694,35 @@
       return w.toLowerCase().replace(/[^a-z0-9'-]/g, '').replace(/^['-]+|['-]+$/g, '');
     }
 
-    function scoreQuestionPair(spokenQ, storedQ, storedAnswer, allTargets) {
+    function scoreQuestionPair(spokenQ, storedQ, storedAnswer, allTargets, validSpokenSet) {
       const spokenWords = spokenQ.toLowerCase().split(/\s+/).map(cleanWord).filter(w => w.length > 1 && !STOP_WORDS.has(w));
       const storedWords = storedQ.toLowerCase().split(/\s+/).map(cleanWord);
       const storedMeaningful = storedWords.filter(w => w.length > 1 && !STOP_WORDS.has(w));
+      // Filter out ASR noise — words not found in any stored question
+      const relevantSpoken = validSpokenSet ? spokenWords.filter(w => validSpokenSet.has(w)) : spokenWords;
       let score = 0;
 
       // Clean stored question text for bigram matching (strip punctuation)
       const cleanStoredQ = storedQ.toLowerCase().replace(/[^a-z0-9'\s-]/g, ' ').replace(/\s+/g, ' ').trim();
 
-      // L1: Exact phrase bigrams
+      // L1: Exact phrase bigrams (use relevantSpoken to skip noise-word bigrams)
       const spokenBigrams = [];
-      for (let i = 0; i < spokenWords.length - 1; i++) {
-        spokenBigrams.push(spokenWords[i] + ' ' + spokenWords[i+1]);
+      for (let i = 0; i < relevantSpoken.length - 1; i++) {
+        spokenBigrams.push(relevantSpoken[i] + ' ' + relevantSpoken[i+1]);
       }
       for (const bg of spokenBigrams) {
         if (cleanStoredQ.includes(bg)) score += 10;
       }
 
-      // L2: Exact word overlap
+      // L2: Exact word overlap — ratio against stored meaningful count
+      //     Using storedMeaningful.length prevents ASR noise from diluting score
       const exactMatched = spokenWords.filter(w => storedWords.includes(w));
-      const l2Ratio = spokenWords.length > 0 ? exactMatched.length / spokenWords.length : 0;
+      const l2Ratio = storedMeaningful.length > 0 ? exactMatched.length / storedMeaningful.length : 0;
       score += l2Ratio * 15;
 
       // L3: Stem fallback — only words that MISSED in L2 (prevents double-counting)
       const exactSet = new Set(exactMatched);
-      const l3Candidates = spokenWords.filter(w => !exactSet.has(w));
+      const l3Candidates = relevantSpoken.filter(w => !exactSet.has(w));
       const storedStems = storedMeaningful.map(stem);
       if (l3Candidates.length > 0) {
         const l3Matches = l3Candidates.filter(w => storedStems.includes(stem(w))).length;
@@ -1795,10 +1798,9 @@
     }
 
     // Main entry point: Q&A matching with legacy fallback
-    function computeConfidence(score, spokenQ) {
-      const words = spokenQ.toLowerCase().split(/\s+/).map(cleanWord).filter(w => w.length > 1 && !STOP_WORDS.has(w));
-      if (words.length === 0) return 0;
-      const maxPossible = Math.max(1, (words.length - 1) * 10 + 15 + 10 + SYNONYM_GROUPS.length * 5 + 20);
+    function computeConfidence(score, wordCount) {
+      if (wordCount <= 0) return 0;
+      const maxPossible = Math.max(1, (wordCount - 1) * 10 + 30);
       return Math.min(1, score / maxPossible);
     }
 
@@ -1815,13 +1817,21 @@
         return legacyExtractRelevantContext(question, ctxText);
       }
 
+      // Build set of ALL meaningful words across all stored questions for ASR noise filtering
+      const validSpokenSet = new Set(
+        pairs.flatMap(p => p.question.toLowerCase().split(/\s+/).map(cleanWord).filter(w => w.length > 1 && !STOP_WORDS.has(w)))
+      );
+      // Compute relevant word count (excluding ASR noise words like "pin number")
+      const spokenWords = question.toLowerCase().split(/\s+/).map(cleanWord).filter(w => w.length > 1 && !STOP_WORDS.has(w));
+      const relevantCount = validSpokenSet.size > 0 ? spokenWords.filter(w => validSpokenSet.has(w)).length : spokenWords.length;
+
       const allTargets = [...new Set(
         pairs.flatMap(p => p.question.toLowerCase().split(/\s+/).map(cleanWord).filter(w => w.length > 3))
       )];
 
       const scored = pairs.map(p => ({
         ...p,
-        score: scoreQuestionPair(question, p.question, p.answer, allTargets)
+        score: scoreQuestionPair(question, p.question, p.answer, allTargets, validSpokenSet)
       }));
 
       scored.sort((a, b) => b.score - a.score);
@@ -1831,7 +1841,7 @@
       qaMatchResult = {
         bestAnswer: best ? best.answer : null,
         bestQuestion: best ? best.question : null,
-        confidence: best ? computeConfidence(best.score, question) : 0
+        confidence: best ? computeConfidence(best.score, relevantCount) : 0
       };
 
       console.log('[DEBUG:extractQ&A] spoken question:', question);
