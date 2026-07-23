@@ -1009,6 +1009,14 @@
       return isInterviewPrompt(text);
     }
 
+    function isQAMatch(text) {
+      if (!text || text.trim().length < 8) return false;
+      const ctxText = getAllEnabledCtxText();
+      if (!ctxText) return false;
+      extractRelevantContext(text, ctxText);
+      return qaMatchResult.confidence >= 0.8;
+    }
+
     function escHtml(s) {
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
@@ -1282,12 +1290,13 @@
           // ── Final: full sentence — only show prompts/questions and only answer questions ──
           const endsWithQuestion = /[?]$/.test(text.trim());
           const isPrompt = isInterviewPrompt(text);
-          rlog('[Relay:final] endsWithQuestion=' + endsWithQuestion + ' isPrompt=' + isPrompt + ' text=«' + text + '»');
+          const isQA = !isPrompt && isQAMatch(text);
+          rlog('[Relay:final] endsWithQuestion=' + endsWithQuestion + ' isPrompt=' + isPrompt + ' isQA=' + isQA + ' text=«' + text + '»');
 
           document.getElementById('liveInterim').textContent = '';
           resetEarlyClassification();
 
-          if (isPrompt) {
+          if (isPrompt || isQA) {
             addTranscriptEntry({ speaker: 'Interviewer', text, type: 'interviewer' });
             addTranscriptLine('Interviewer', text.substring(0, 80) + (text.length > 80 ? '...' : ''));
             updateLiveTranscript();
@@ -1296,8 +1305,8 @@
             // Append this sentence to the running buffer (space-separated)
             relayBuffer = relayBuffer ? relayBuffer + ' ' + text : text;
 
-            // Show filler only if not already triggered during interim
-            if (!fillerActive) {
+            // Show filler only for recognized prompts (Q&A matches skip filler)
+            if (isPrompt && !fillerActive) {
               fillerActive = true;
               showFiller(matchFiller(text), text);
             }
@@ -1402,18 +1411,20 @@
                 trimmed = shortMergeBuffer + ' ' + trimmed;
                 shortMergeBuffer = '';
               }
-              if (isInterviewPrompt(trimmed)) {
+              const isPrompt = isInterviewPrompt(trimmed);
+              const isQA = !isPrompt && isQAMatch(trimmed);
+              if (isPrompt || isQA) {
                 addTranscriptEntry({ speaker: 'Interviewer', text: trimmed, type: 'interviewer' });
                 addTranscriptLine('You', trimmed.substring(0, 80) + (trimmed.length > 80 ? '...' : ''));
                 updateLiveTranscript();
                 closePanel();
-                if (isQuestion(trimmed)) {
+                if (isPrompt) {
                   if (!fillerActive) {
                     fillerActive = true;
                     showFiller(matchFiller(trimmed), trimmed);
                   }
-                  triggerAI(trimmed);
                 }
+                triggerAI(trimmed);
               }
               sendTranscript(trimmed, true);
             }
@@ -1933,11 +1944,10 @@
       const aiEntries = entriesContainer.querySelectorAll('.entry.ai-response');
       if (aiEntries.length > 0) aiEntries[aiEntries.length - 1].remove();
 
-      if (isInterviewPrompt(corrected)) {
+      if (isInterviewPrompt(corrected) || isQAMatch(corrected)) {
         queryAI(corrected);
       }
     });
-
     // ─────────────────────────────────────────────────────────────────────
     // AI QUERY
     // ─────────────────────────────────────────────────────────────────────
@@ -2259,7 +2269,7 @@
             const aiEntries = entriesContainer.querySelectorAll('.entry.ai-response');
             if (aiEntries.length > 0) aiEntries[aiEntries.length - 1].remove();
 
-            if (isInterviewPrompt(corrected)) {
+            if (isInterviewPrompt(corrected) || isQAMatch(corrected)) {
               queryAI(corrected);
             }
           }
