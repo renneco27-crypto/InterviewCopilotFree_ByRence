@@ -655,6 +655,13 @@
   <div id="toast"></div>
 
   <script>
+    // Suppress relay & intermediate debug noise — flip to true to re-enable
+    const RELAY_DEBUG = false;
+    function rlog(...args) { if (RELAY_DEBUG) console.log(...args); }
+    // Suppress intermediate context-filtering debug (keep only final prompt output)
+    const CTX_DEBUG = false;
+    function dlog(...args) { if (CTX_DEBUG) console.log(...args); }
+
     // ─────────────────────────────────────────────────────────────────────
     // STATE
     // ─────────────────────────────────────────────────────────────────────
@@ -807,6 +814,7 @@
     ];
     let fillerActive = false;
     let fillerText = '';
+    let qaMatchResult = { bestAnswer: null, bestQuestion: null, confidence: 0 };
 
     function extractKeyTopic(text) {
       if (!text) return '';
@@ -1153,11 +1161,11 @@
       }
       if (relaySocket?.readyState === WebSocket.OPEN) return;
       const wsUrl = `${relayConfig.url}?role=electron&secret=${relayConfig.secret}`;
-      console.log('[Relay] Connecting to:', wsUrl.replace(relayConfig.secret, '***'));
+      rlog('[Relay] Connecting to:', wsUrl.replace(relayConfig.secret, '***'));
       relaySocket = new WebSocket(wsUrl);
 
       relaySocket.onopen = () => {
-        console.log('[Relay] Connected as electron — readyState:', relaySocket.readyState);
+        rlog('[Relay] Connected as electron — readyState:', relaySocket.readyState);
         showToast('📡 Relay connected');
         relayPingInterval = setInterval(() => {
           if (relaySocket?.readyState === WebSocket.OPEN)
@@ -1170,7 +1178,7 @@
         try { msg = JSON.parse(e.data); } catch { return; }
 
         // ── DEBUG: log every raw message so we can see the relay shape ──────
-        console.log('[Relay:raw]', JSON.stringify(msg).substring(0, 200));
+        rlog('[Relay:raw]', JSON.stringify(msg).substring(0, 200));
 
         if (msg.type === 'status') {
           showToast(msg.phone_connected ? '📱 Phone connected.' : '📱 Phone disconnected.');
@@ -1178,16 +1186,16 @@
 
         if (msg.type === 'transcript') {
           // ── DEBUG: log what we received before any gate ──────────────────
-          console.log('[Relay:transcript] raw text=«' + msg.text + '» speaker=' + msg.speaker + ' isFinal=' + msg.isFinal + ' phase=' + msg.phase);
+          rlog('[Relay:transcript] raw text=«' + msg.text + '» speaker=' + msg.speaker + ' isFinal=' + msg.isFinal + ' phase=' + msg.phase);
 
           if (!msg.text?.trim()) {
-            console.log('[Relay:drop] empty text');
+            rlog('[Relay:drop] empty text');
             return;
           }
 
           // ── Gate 1: mute / pause ────────────────────────────────────────
           if (isMuted || relayPaused) {
-            console.log('[Relay:drop] Gate1 muted — isMuted=' + isMuted + ' relayPaused=' + relayPaused);
+            rlog('[Relay:drop] Gate1 muted — isMuted=' + isMuted + ' relayPaused=' + relayPaused);
             return;
           }
 
@@ -1199,7 +1207,7 @@
           const isFinal = msg.isFinal === true || phase === 'final' ||
                           (msg.isFinal === undefined && msg.phase === undefined);
 
-          console.log('[Relay:parsed] text=«' + text.substring(0,60) + '» speaker=' + speaker + ' phase=' + phase + ' isFinal=' + isFinal);
+          rlog('[Relay:parsed] text=«' + text.substring(0,60) + '» speaker=' + speaker + ' phase=' + phase + ' isFinal=' + isFinal);
 
           // ── Gate 2: drop own voice from electron side only ─────────────
           // The relay sets from:'phone' for the interviewer's phone mic and
@@ -1208,7 +1216,7 @@
           // speaker:'you' on from:'electron' is the CANDIDATE — drop it.
           const from = msg.from || 'electron';
           if (speaker === 'you' && from !== 'phone') {
-            console.log('[Relay:drop] Gate2 candidate mic (speaker=you from=' + from + ')');
+            rlog('[Relay:drop] Gate2 candidate mic (speaker=you from=' + from + ')');
             if (isSelfRead(text)) {
               selfReadSuppressUntil = Math.max(selfReadSuppressUntil, Date.now() + 3000);
             }
@@ -1218,7 +1226,7 @@
           // ── Gate 3: self-read suppression (secondary, for edge cases) ──
           if (isSelfRead(text)) {
             if (!isFinal) selfReadSuppressUntil = Math.max(selfReadSuppressUntil, Date.now() + 3000);
-            console.log('[Relay:drop] Gate3 self-read suppressed:', text.substring(0, 60));
+            rlog('[Relay:drop] Gate3 self-read suppressed:', text.substring(0, 60));
             return;
           }
 
@@ -1231,13 +1239,13 @@
           // Interviewer speech (from:'phone') still passes through so the
           // next question gets queued and displayed as normal.
           if (aiRunning && from !== 'phone') {
-            console.log('[Relay:drop] Gate4 AI running — dropping candidate filler:', text.substring(0, 60));
+            rlog('[Relay:drop] Gate4 AI running — dropping candidate filler:', text.substring(0, 60));
             return;
           }
 
           // ── Phase 1: first word arrived — start classifying immediately ─
           if (phase === 1) {
-            console.log('[Relay:phase1] classifyEarly:', text);
+            rlog('[Relay:phase1] classifyEarly:', text);
             classifyEarly(text);
             if (isInterviewPrompt(text) && !fillerActive) {
               fillerActive = true;
@@ -1248,7 +1256,7 @@
 
           // ── Phase 2 / interim: more words — show in interim bar but don't commit ─
           if (!isFinal) {
-            console.log('[Relay:interim] showing in interim bar:', text.substring(0, 60));
+            rlog('[Relay:interim] showing in interim bar:', text.substring(0, 60));
             classifyEarly(text);
             document.getElementById('liveInterim').textContent = text;
             if (isInterviewPrompt(text) && !fillerActive) {
@@ -1262,19 +1270,19 @@
           const wc = text.split(/\s+/).length;
           if (wc < 4 && !text.endsWith('?')) {
             shortMergeBuffer = shortMergeBuffer ? shortMergeBuffer + ' ' + text : text;
-            console.log('[Relay:merge] Buffered short (' + wc + 'w): «' + shortMergeBuffer + '»');
+            rlog('[Relay:merge] Buffered short (' + wc + 'w): «' + shortMergeBuffer + '»');
             return;
           }
           if (shortMergeBuffer) {
             text = shortMergeBuffer + ' ' + text;
             shortMergeBuffer = '';
-            console.log('[Relay:merge] Prepended: «' + text.substring(0, 80) + '»');
+            rlog('[Relay:merge] Prepended: «' + text.substring(0, 80) + '»');
           }
 
           // ── Final: full sentence — only show prompts/questions and only answer questions ──
           const endsWithQuestion = /[?]$/.test(text.trim());
           const isPrompt = isInterviewPrompt(text);
-          console.log('[Relay:final] endsWithQuestion=' + endsWithQuestion + ' isPrompt=' + isPrompt + ' text=«' + text + '»');
+          rlog('[Relay:final] endsWithQuestion=' + endsWithQuestion + ' isPrompt=' + isPrompt + ' text=«' + text + '»');
 
           document.getElementById('liveInterim').textContent = '';
           resetEarlyClassification();
@@ -1300,13 +1308,13 @@
             const frozenText   = relayBuffer;
             const frozenSysMsg = earlyClassification?.systemMsg || null;
 
-            console.log('[Relay:buffer] ' + (endsWithQuestion ? 'Question mark detected' : 'Prompt detected (no ?)') + ' — waiting 2s before AI. Buffer=«' + frozenText.substring(0, 80) + '»');
+            rlog('[Relay:buffer] ' + (endsWithQuestion ? 'Question mark detected' : 'Prompt detected (no ?)') + ' — waiting 2s before AI. Buffer=«' + frozenText.substring(0, 80) + '»');
 
             relayAITimer = setTimeout(() => {
               relayAITimer = null;
               relayBuffer  = '';
               fillerActive = false;
-              console.log('[Relay:buffer] 2s elapsed — sending to AI: «' + frozenText.substring(0, 80) + '»');
+              rlog('[Relay:buffer] 2s elapsed — sending to AI: «' + frozenText.substring(0, 80) + '»');
               triggerAI(frozenText, frozenSysMsg);
             }, 2000);
           }
@@ -1341,7 +1349,7 @@
           loopStream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: { width: 1, height: 1, frameRate: 1 } });
           loopStream.getVideoTracks().forEach(t => t.stop());
         } catch (loopErr) {
-          console.log('[Audio] Loopback unavailable, mic only:', loopErr.message);
+          rlog('[Audio] Loopback unavailable, mic only:', loopErr.message);
           loopStream = null;
         }
         audioCtx = new AudioContext();
@@ -1586,14 +1594,151 @@
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // CONTEXT RELEVANCE FILTER
-    // Extracts word windows (±10/+20) around keyword occurrences in the
-    // context for any question keyword that also appears in the context.
-    // Merges overlapping windows — the more keywords cluster in one region
-    // the tighter the extracted context. Falls back to full context when
-    // no keyword matches are found in the context text.
+    // Q&A MATCHING ALGORITHM
+    // Multi-layer confidence scoring for structured Q&A context.
+    // Matches spoken question against stored numbered Q&A pairs,
+    // returns top 3 full question+answer blocks.
+    // Falls back to legacy keyword-window approach for non-Q&A text.
     // ─────────────────────────────────────────────────────────────────────
-    function extractRelevantContext(question, ctxText) {
+
+    const STOP_WORDS = new Set([
+      'a','an','the','is','it','are','do','does','did','you','your','me','my',
+      'i','we','our','they','their','he','she','him','her','and','or','but',
+      'in','on','at','to','for','of','with','by','from','as','was','were',
+      'been','be','have','has','had','will','would','could','should','can',
+      'may','might','shall','not','no','nor','so','if','then','than','that',
+      'this','these','those','what','which','who','whom','when','where','how',
+      'up','out','off','over','under','again','further','once','here','there',
+      'all','each','every','both','few','more','most','other','some','such',
+      'only','own','same','too','very','just','because','also'
+    ]);
+
+    const SYNONYM_GROUPS = [
+      ['remote','telework','telecommute','home','onsite','hybrid','office','workplace'],
+      ['comfortable','enjoy','prefer','like','flexible','adapt','fit','suit'],
+      ['relocate','travel','move','transfer','willing','mobile'],
+      ['experience','background','skill','expertise','proficiency','knowledge'],
+      ['manage','lead','supervise','oversee','direct','coordinate'],
+      ['resolve','solve','fix','troubleshoot','repair','handle'],
+      ['develop','build','create','design','engineer','code','program','implement'],
+      ['team','collaborate','group','partner','coworker','colleague'],
+      ['project','initiative','task','assignment','deliverable'],
+      ['support','assist','help','maintain','service']
+    ];
+
+    function countSyllables(word) {
+      const w = word.toLowerCase().replace(/[^a-z]/g, '');
+      if (w.length <= 3) return 1;
+      const vowels = w.match(/[aeiouy]+/gi);
+      return vowels ? vowels.length : 1;
+    }
+
+    function stem(w) {
+      let s = w.replace(/ing$/, '').replace(/ed$/, '').replace(/s$/, '').replace(/ly$/, '').replace(/ment$/, '');
+      // Collapse doubled final consonants (e.g. "preferr" -> "prefer", "stopped" -> "stop")
+      s = s.replace(/([a-z])\1$/, '$1');
+      return s;
+    }
+
+    function parseQAPairs(ctxText) {
+      const pairs = [];
+      const regex = /^\s*(\d+)\.\s+(.+?)\n([\s\S]+?)(?=\n\s*\d+\.\s|\s*$)/gm;
+      let match;
+      while ((match = regex.exec(ctxText)) !== null) {
+        pairs.push({
+          id: parseInt(match[1]),
+          question: match[2].trim(),
+          answer: match[3].trim()
+        });
+      }
+      return pairs;
+    }
+
+    function recoverGap(gapWords, candidateTargets) {
+      if (!gapWords || gapWords.length < 2) return null;
+      const concat = gapWords.join('').toLowerCase();
+      let best = null, bestScore = 0;
+
+      for (const target of candidateTargets) {
+        const lowerT = target.toLowerCase();
+        if (lowerT.length < 3) continue;
+
+        const gapSyl = gapWords.reduce((s, w) => s + countSyllables(w), 0);
+        const tgtSyl = countSyllables(lowerT);
+        if (Math.abs(gapSyl - tgtSyl) > 1) continue;
+
+        const concatLetters = concat.replace(/[^a-z]/g, '');
+        const tgtLetters = lowerT.replace(/[^a-z]/g, '');
+        const shared = [...new Set(concatLetters)].filter(c => tgtLetters.includes(c));
+        const ratio = tgtLetters.length > 0 ? shared.length / tgtLetters.length : 0;
+        if (ratio < 0.8) continue;
+
+        const lenDiff = Math.abs(concat.length - lowerT.length);
+        const score = ratio * 100 - lenDiff * 5;
+        if (score > bestScore) { bestScore = score; best = target; }
+      }
+      return best;
+    }
+
+    function cleanWord(w) {
+      return w.toLowerCase().replace(/[^a-z0-9'-]/g, '').replace(/^['-]+|['-]+$/g, '');
+    }
+
+    function scoreQuestionPair(spokenQ, storedQ, storedAnswer, allTargets) {
+      const spokenWords = spokenQ.toLowerCase().split(/\s+/).map(cleanWord).filter(w => w.length > 1 && !STOP_WORDS.has(w));
+      const storedWords = storedQ.toLowerCase().split(/\s+/).map(cleanWord);
+      const storedMeaningful = storedWords.filter(w => w.length > 1 && !STOP_WORDS.has(w));
+      let score = 0;
+
+      // Clean stored question text for bigram matching (strip punctuation)
+      const cleanStoredQ = storedQ.toLowerCase().replace(/[^a-z0-9'\s-]/g, ' ').replace(/\s+/g, ' ').trim();
+
+      // L1: Exact phrase bigrams
+      const spokenBigrams = [];
+      for (let i = 0; i < spokenWords.length - 1; i++) {
+        spokenBigrams.push(spokenWords[i] + ' ' + spokenWords[i+1]);
+      }
+      for (const bg of spokenBigrams) {
+        if (cleanStoredQ.includes(bg)) score += 10;
+      }
+
+      // L2: Exact word overlap
+      const exactMatched = spokenWords.filter(w => storedWords.includes(w));
+      const l2Ratio = spokenWords.length > 0 ? exactMatched.length / spokenWords.length : 0;
+      score += l2Ratio * 15;
+
+      // L3: Stem fallback — only words that MISSED in L2 (prevents double-counting)
+      const exactSet = new Set(exactMatched);
+      const l3Candidates = spokenWords.filter(w => !exactSet.has(w));
+      const storedStems = storedMeaningful.map(stem);
+      if (l3Candidates.length > 0) {
+        const l3Matches = l3Candidates.filter(w => storedStems.includes(stem(w))).length;
+        score += (l3Matches / l3Candidates.length) * 10;
+      }
+
+      // L4: Synonym group match
+      const spokenStems = spokenWords.map(stem);
+      const storedStemsAll = storedWords.map(stem);
+      for (const group of SYNONYM_GROUPS) {
+        const inSpoken = group.some(w => spokenWords.includes(w) || spokenStems.includes(stem(w)));
+        const inStored = group.some(w => storedWords.includes(w) || storedStemsAll.includes(stem(w)));
+        if (inSpoken && inStored) score += 5;
+      }
+
+      // L0.5: Gap Recovery — only when ASR likely fragmented a term
+      if (l2Ratio < 0.4 && exactMatched.length >= 2) {
+        const unmatchedStored = storedMeaningful.filter(w => !exactSet.has(w) && w.length > 4);
+        if (unmatchedStored.length > 0) {
+          const recovered = recoverGap(unmatchedStored, allTargets);
+          if (recovered) score += 20;
+        }
+      }
+
+      return score;
+    }
+
+    // Legacy fallback — original keyword-window approach for non-Q&A text
+    function legacyExtractRelevantContext(question, ctxText) {
       if (!question || !ctxText) return ctxText;
 
       const KEYWORDS = [
@@ -1609,6 +1754,8 @@
       const matched = KEYWORDS.filter(kw =>
         new RegExp('\\b' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(lowerQ)
       );
+      dlog('[DEBUG:legacy] question:', question);
+      dlog('[DEBUG:legacy] matched keywords:', matched);
       if (matched.length === 0) return ctxText;
 
       const ctxWords = ctxText.split(/\s+/);
@@ -1621,7 +1768,6 @@
           if (clean !== kw) continue;
           const start = Math.max(0, i - 10);
           const end   = Math.min(ctxWords.length, i + 1 + 20);
-          // Merge with existing overlapping range
           const overlap = ranges.findIndex(r => r.start < end && r.end > start);
           if (overlap !== -1) {
             ranges[overlap].start = Math.min(ranges[overlap].start, start);
@@ -1638,16 +1784,75 @@
       return ranges.map(r => ctxWords.slice(r.start, r.end).join(' ')).join('\n...\n');
     }
 
+    // Main entry point: Q&A matching with legacy fallback
+    function computeConfidence(score, spokenQ) {
+      const words = spokenQ.toLowerCase().split(/\s+/).map(cleanWord).filter(w => w.length > 1 && !STOP_WORDS.has(w));
+      if (words.length === 0) return 0;
+      const maxPossible = Math.max(1, (words.length - 1) * 10 + 15 + 10 + SYNONYM_GROUPS.length * 5 + 20);
+      return Math.min(1, score / maxPossible);
+    }
+
+    function extractRelevantContext(question, ctxText) {
+      if (!question || !ctxText) {
+        qaMatchResult = { bestAnswer: null, bestQuestion: null, confidence: 0 };
+        return ctxText;
+      }
+
+      const pairs = parseQAPairs(ctxText);
+      if (pairs.length === 0) {
+        qaMatchResult = { bestAnswer: null, bestQuestion: null, confidence: 0 };
+        console.log('[DEBUG:extractQ&A] No Q&A pairs found — falling back to legacy keyword-window');
+        return legacyExtractRelevantContext(question, ctxText);
+      }
+
+      const allTargets = [...new Set(
+        pairs.flatMap(p => p.question.toLowerCase().split(/\s+/).map(cleanWord).filter(w => w.length > 3))
+      )];
+
+      const scored = pairs.map(p => ({
+        ...p,
+        score: scoreQuestionPair(question, p.question, p.answer, allTargets)
+      }));
+
+      scored.sort((a, b) => b.score - a.score);
+      const top = scored.slice(0, 3);
+
+      const best = scored[0];
+      qaMatchResult = {
+        bestAnswer: best ? best.answer : null,
+        bestQuestion: best ? best.question : null,
+        confidence: best ? computeConfidence(best.score, question) : 0
+      };
+
+      console.log('[DEBUG:extractQ&A] spoken question:', question);
+      console.log(`[DEBUG:extractQ&A] best match: Q${best ? best.id : '?'} score=${best ? best.score : 0} confidence=${(qaMatchResult.confidence * 100).toFixed(0)}%`);
+      top.forEach((p, i) => {
+        console.log(`[DEBUG:extractQ&A] #${i+1} Q${p.id} score=${p.score}: "${p.question.substring(0, 60)}..."`);
+      });
+
+      const result = top.map(p => `${p.question}\n${p.answer}`).join('\n\n---\n\n');
+      console.log('[DEBUG:extractQ&A] total context length:', result.length, 'chars');
+      return result;
+    }
+
     function buildSystemMsg(base, question = '') {
       let parts = [];
       if (globalInstruction) parts.push(globalInstruction);
       const ctxText = getAllEnabledCtxText();
+      let filteredCtx = '';
       if (ctxText) {
-        const filteredCtx = extractRelevantContext(question, ctxText);
+        filteredCtx = extractRelevantContext(question, ctxText);
         parts.push(filteredCtx);
       }
       parts.push(base);
-      return parts.join('\n\n');
+      const result = parts.join('\n\n');
+      console.log('[DEBUG:buildSystemMsg] question:', question);
+      console.log('[DEBUG:buildSystemMsg] full ctx length:', ctxText ? ctxText.length : 0, 'chars');
+      console.log('[DEBUG:buildSystemMsg] filtered ctx length:', filteredCtx.length, 'chars');
+      console.log('[DEBUG:buildSystemMsg] === SYSTEM MESSAGE SENT TO AI ===');
+      console.log(result);
+      console.log('[DEBUG:buildSystemMsg] === END SYSTEM MESSAGE ===');
+      return result;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -1713,7 +1918,7 @@
       // suppressed by Gate 4 in the relay handler, but this is the safety net
       // in case triggerAI is called from the local SpeechRecognition path too.
       if (aiRunning) {
-        console.log('[AI] Already running — ignoring stacked triggerAI for:', question.substring(0, 60));
+        rlog('[AI] Already running — ignoring stacked triggerAI for:', question.substring(0, 60));
         return;
       }
 
@@ -1721,16 +1926,33 @@
       closePanel();
       setStatus('thinking');
       try {
-        // Inject filler text as a seamless-start instruction if present
-        const userMsg = fillerText
-          ? question + '\n\nContinue seamlessly from this exact opening without repeating it: "' + fillerText + '"'
-          : question;
-        // Use pre-classified systemMsg if available (built during interim phase)
-        // — falls back to building it now if early classification didn't run.
         const systemMsg = prebuiltSystemMsg || buildSystemMsg(
           "Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.",
           question
         );
+        // Ensure fresh qaMatchResult when prebuilt system message was used
+        if (prebuiltSystemMsg) {
+          const ctxText = getAllEnabledCtxText();
+          if (ctxText) extractRelevantContext(question, ctxText);
+        }
+        // High-confidence Q&A match — bypass AI entirely
+        if (qaMatchResult.confidence >= 0.8) {
+          const directAnswer = qaMatchResult.bestAnswer;
+          console.log(`[DEBUG:triggerAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%) — bypassing AI, using stored answer`);
+          markAIResponseSpoken(directAnswer);
+          displayResponse(MODELS[currentModel].name, directAnswer);
+          addTranscriptLine('AI', directAnswer.substring(0, 80) + (directAnswer.length > 80 ? '...' : ''));
+          addTranscriptEntry({ speaker: 'AI (' + MODELS[currentModel].name + ')', text: directAnswer, type: 'ai-response' });
+          updateLiveTranscript();
+          setStatus('ready');
+          return;
+        }
+        // Inject filler text as a seamless-start instruction if present
+        const userMsg = fillerText
+          ? question + '\n\nContinue seamlessly from this exact opening without repeating it: "' + fillerText + '"'
+          : question;
+        console.log('[DEBUG:triggerAI] userMsg:', userMsg);
+        console.log('[DEBUG:triggerAI] systemMsg length:', systemMsg.length, 'chars');
         const { response, usedModel } = await callAIModelWithFallback(userMsg, systemMsg, currentModel);
         // Strip filler prefix from response if the AI repeated it
         let finalResponse = response;
@@ -1774,6 +1996,20 @@
       setStatus('thinking');
       try {
         const systemMsg = systemMsgOverride || buildSystemMsg("Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.", userMessage);
+        // Bypass AI on high-confidence Q&A match (only when buildSystemMsg was called)
+        if (!systemMsgOverride && qaMatchResult.confidence >= 0.8) {
+          const directAnswer = qaMatchResult.bestAnswer;
+          console.log(`[DEBUG:queryAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%) — bypassing AI, using stored answer`);
+          markAIResponseSpoken(directAnswer);
+          displayResponse(MODELS[startModelKey].name, directAnswer);
+          addTranscriptLine(MODELS[startModelKey].name, directAnswer.substring(0, 60) + (directAnswer.length > 60 ? '...' : ''));
+          addTranscriptEntry({ speaker: 'AI (' + MODELS[startModelKey].name + ')', text: directAnswer, type: 'ai-response' });
+          updateLiveTranscript();
+          setStatus('ready');
+          return;
+        }
+        console.log('[DEBUG:queryAI] userMessage:', userMessage);
+        console.log('[DEBUG:queryAI] systemMsg length:', systemMsg.length, 'chars');
         const { response, usedModel } = await callAIModelWithFallback(userMessage, systemMsg, startModelKey);
         markAIResponseSpoken(response); // arm self-read suppression before display
         displayResponse(MODELS[usedModel].name, response);
@@ -2115,7 +2351,7 @@
       if (window.electronAPI?.getRelayConfig) {
         window.electronAPI.getRelayConfig().then(cfg => {
           relayConfig = cfg;
-          console.log('[Init] Relay config loaded — url:', cfg.url || '(EMPTY — check .env RELAY_URL)', 'secret:', cfg.secret ? '***set***' : '(EMPTY)');
+          rlog('[Init] Relay config loaded — url:', cfg.url || '(EMPTY — check .env RELAY_URL)', 'secret:', cfg.secret ? '***set***' : '(EMPTY)');
           connectRelay(); // auto-connect relay on startup — don't wait for Record button
         });
       } else {
@@ -2128,7 +2364,7 @@
       if (window.electronAPI?.getRelayPaused) {
         window.electronAPI.getRelayPaused().then(({ paused }) => {
           relayPaused = paused;
-          if (paused) console.log('[Relay] Started in paused state (muted at launch)');
+          if (paused) rlog('[Relay] Started in paused state (muted at launch)');
         }).catch(() => {}); // non-fatal if preload not yet updated
       }
 
@@ -2154,13 +2390,13 @@
       if (window.electronAPI?.onRelayPause) {
         window.electronAPI.onRelayPause(() => {
           relayPaused = true;
-          console.log('[Relay] Paused by main process — transcripts will be dropped');
+          rlog('[Relay] Paused by main process — transcripts will be dropped');
         });
       }
       if (window.electronAPI?.onRelayResume) {
         window.electronAPI.onRelayResume(() => {
           relayPaused = false;
-          console.log('[Relay] Resumed by main process');
+          rlog('[Relay] Resumed by main process');
         });
       }
 
