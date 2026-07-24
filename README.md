@@ -1,4 +1,19 @@
+
 pnpm start
+
+The regex at interview-copilot-overlay.html:1644 parses this format:
+
+1. What is your name?
+My name is John.  (answer can span
+multiple paragraphs)
+
+2. Where do you live?
+I live in New York.
+
+3. What is your role?
+Software engineer.
+
+
 
 # Interview Copilot
 

@@ -1302,8 +1302,17 @@
             updateLiveTranscript();
             closePanel();
 
-            // Append this sentence to the running buffer (space-separated)
-            relayBuffer = relayBuffer ? relayBuffer + ' ' + text : text;
+            // Append this sentence to the running buffer (space-separated),
+            // but only if it isn't already contained in the buffer — the relay
+            // sometimes fires isFinal multiple times for the same utterance,
+            // which would otherwise make frozenText = "Q Q Q Q" and break QA scoring.
+            const _normNew  = text.trim().toLowerCase();
+            const _normBuf  = relayBuffer.toLowerCase();
+            if (!relayBuffer || (!_normBuf.includes(_normNew) && _normNew !== _normBuf)) {
+              relayBuffer = relayBuffer ? relayBuffer + ' ' + text : text;
+            } else {
+              rlog('[Relay:buffer] Duplicate sentence suppressed — already in buffer:', text.substring(0, 60));
+            }
 
             // Show filler only for recognized prompts (Q&A matches skip filler)
             if (isPrompt && !fillerActive) {
@@ -1323,7 +1332,35 @@
               relayAITimer = null;
               relayBuffer  = '';
               fillerActive = false;
-              rlog('[Relay:buffer] 2s elapsed — sending to AI: «' + frozenText.substring(0, 80) + '»');
+              rlog('[Relay:buffer] 2s elapsed — evaluating: «' + frozenText.substring(0, 80) + '»');
+
+              // ── Pre-flight QA check: re-score against the full (not truncated)
+              // context now that the complete sentence is in frozenText.
+              // If confidence is already ≥ 80% we can display the stored answer
+              // directly in the overlay and never touch the AI — even when the
+              // relay sent a truncated/partial sentence earlier.
+              const _ctxText = getAllEnabledCtxText();
+              if (_ctxText) {
+                extractRelevantContext(frozenText, _ctxText); // updates qaMatchResult
+                if (qaMatchResult.confidence >= 0.8) {
+                  const directAnswer = qaMatchResult.bestAnswer && qaMatchResult.bestAnswer.length > 0
+                    ? qaMatchResult.bestAnswer
+                    : '[' + (qaMatchResult.bestQuestion || frozenText) + ']';
+                  rlog('[Relay:bypass] 80%+ QA match at timer fire — skipping AI, displaying in overlay');
+                  console.log(`[DEBUG:relay-bypass] HIGH-CONFIDENCE match (${(qaMatchResult.confidence * 100).toFixed(0)}%) — overlay only, no AI call`);
+                  markAIResponseSpoken(directAnswer);
+                  displayResponse('QA', directAnswer);
+                  addTranscriptLine('AI', directAnswer.substring(0, 80) + (directAnswer.length > 80 ? '...' : ''));
+                  addTranscriptEntry({ speaker: 'AI (QA)', text: directAnswer, type: 'ai-response' });
+                  updateLiveTranscript();
+                  setStatus('ready');
+                  aiRunning = false;
+                  fillerText = '';
+                  return; // ← never reaches triggerAI / the network
+                }
+              }
+
+              rlog('[Relay:buffer] No 80%+ match — sending to AI: «' + frozenText.substring(0, 80) + '»');
               triggerAI(frozenText, frozenSysMsg);
             }, 2000);
           }
@@ -1653,25 +1690,52 @@
 
     function parseQAPairs(ctxText) {
       const pairs = [];
-      const blockRegex = /^\s*(\d+)\.\s+([\s\S]+?)(?=\n\s*\d+\.\s|\s*$)/gm;
-      let match;
-      while ((match = blockRegex.exec(ctxText)) !== null) {
-        const block = match[2].trim();
-        const firstNewline = block.indexOf('\n');
-        let question, answer;
-        if (firstNewline !== -1) {
-          question = block.substring(0, firstNewline).trim();
-          answer = block.substring(firstNewline).trim();
-        } else {
-          question = block;
-          answer = '';
-        }
-        pairs.push({
-          id: parseInt(match[1]),
-          question,
-          answer
-        });
+
+      // First: numbered "N. Question\nAnswer" format.
+      // Split on numbered-item boundaries so the lazy [\s\S]+? issue
+      // (which stops at the first line) doesn't swallow multi-line answers.
+      const blocks = ctxText.split(/(?=^\d+\.\s)/m).filter(b => b.trim());
+      for (const block of blocks) {
+        const trimmed = block.trim();
+        const headMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
+        if (!headMatch) continue;
+        const id = parseInt(headMatch[1]);
+        // Everything after "N. " on the SAME line is the question;
+        // everything after the first newline in the remainder is the answer.
+        const afterHead = trimmed.substring(headMatch[0].length); // text after "N. <question line>"
+        const question  = headMatch[2].trim();
+        const answer    = afterHead.indexOf('\n') !== -1
+          ? afterHead.substring(afterHead.indexOf('\n')).trim()
+          : '';
+        pairs.push({ id, question, answer });
       }
+
+      // Fallback: --- separator format (only when no numbered pairs found)
+      if (pairs.length === 0) {
+        const dashBlocks = ctxText.split(/\n\s*---\s*\n/);
+        if (dashBlocks.length > 1) {
+          dashBlocks.forEach((block, idx) => {
+            const trimmed = block.trim();
+            if (!trimmed) return;
+            const firstNewline = trimmed.indexOf('\n');
+            let question, answer;
+            if (firstNewline !== -1) {
+              question = trimmed.substring(0, firstNewline).trim();
+              answer = trimmed.substring(firstNewline).trim();
+            } else {
+              question = trimmed;
+              answer = '';
+            }
+            if (question) {
+              pairs.push({ id: idx + 1, question, answer });
+            }
+          });
+          if (pairs.length > 0) {
+            console.log('[DEBUG:parseQAPairs] Used --- separator format, found', pairs.length, 'blocks');
+          }
+        }
+      }
+
       return pairs;
     }
 
@@ -1715,6 +1779,8 @@
 
       // Clean stored question text for bigram matching (strip punctuation)
       const cleanStoredQ = storedQ.toLowerCase().replace(/[^a-z0-9'\s-]/g, ' ').replace(/\s+/g, ' ').trim();
+      // Also create a stop-word-filtered version so bigrams from noise-cleaned speech match
+      const filteredStoredQ = cleanStoredQ.split(/\s+/).filter(w => w.length > 1 && !STOP_WORDS.has(w)).join(' ');
 
       // L1: Exact phrase bigrams (use relevantSpoken to skip noise-word bigrams)
       const spokenBigrams = [];
@@ -1722,7 +1788,7 @@
         spokenBigrams.push(relevantSpoken[i] + ' ' + relevantSpoken[i+1]);
       }
       for (const bg of spokenBigrams) {
-        if (cleanStoredQ.includes(bg)) score += 10;
+        if (filteredStoredQ.includes(bg)) score += 10;
       }
 
       // L2: Exact word overlap — ratio against stored meaningful count
@@ -1974,10 +2040,17 @@
         if (ctxText) extractRelevantContext(question, ctxText);
         qaMatchResult.bestQuestion = qaMatchResult.bestQuestion || question;
 
-        // High-confidence Q&A match — bypass AI entirely, show full answer
-        if (qaMatchResult.confidence >= 0.8 && qaMatchResult.bestAnswer.length >= 250) {
-          const directAnswer = qaMatchResult.bestAnswer;
-          console.log(`[DEBUG:triggerAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%, ${directAnswer.length} chars) — bypassing AI, using stored answer`);
+        // Cache the result now so a second extractRelevantContext call inside
+        // buildSystemMsg (which uses a truncated maxCtxChars path) cannot
+        // overwrite a high-confidence match with a lower-scoring result.
+        const cachedQaMatchResult = Object.assign({}, qaMatchResult);
+
+        // High-confidence Q&A match — bypass AI entirely, show full answer in overlay only
+        if (cachedQaMatchResult.confidence >= 0.8) {
+          const directAnswer = cachedQaMatchResult.bestAnswer && cachedQaMatchResult.bestAnswer.length > 0
+            ? cachedQaMatchResult.bestAnswer
+            : '[' + cachedQaMatchResult.bestQuestion + ']';
+          console.log(`[DEBUG:triggerAI] ✅ OVERLAY-ONLY bypass (${(cachedQaMatchResult.confidence * 100).toFixed(0)}%, ${directAnswer.length} chars) — no AI network call`);
           markAIResponseSpoken(directAnswer);
           displayResponse(MODELS[currentModel].name, directAnswer);
           addTranscriptLine('AI', directAnswer.substring(0, 80) + (directAnswer.length > 80 ? '...' : ''));
@@ -1988,6 +2061,9 @@
         }
 
         // AI path — build system message with truncated context to save tokens
+        // Restore the cached result in case buildSystemMsg's internal
+        // extractRelevantContext call (with maxCtxChars=500) overwrote it.
+        qaMatchResult = Object.assign({}, cachedQaMatchResult);
         const systemMsg = buildSystemMsg(
           "Answer the interview question as the person described in the context above. Speak in first person, naturally and professionally — like a real person talking, not a resume being read. Use plain language that anyone can follow, avoid jargon unless necessary, and keep it concise. For concept questions, 2-3 sentences is enough. For process or troubleshooting questions, use a short numbered list with no filler. No hype openers, no sign-offs.",
           question,
@@ -2047,9 +2123,11 @@
           if (ctxText) extractRelevantContext(userMessage, ctxText);
 
           // Bypass AI on high-confidence Q&A match — show full answer
-          if (qaMatchResult.confidence >= 0.8 && qaMatchResult.bestAnswer.length >= 250) {
-            const directAnswer = qaMatchResult.bestAnswer;
-            console.log(`[DEBUG:queryAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%, ${directAnswer.length} chars) — bypassing AI, using stored answer`);
+          if (qaMatchResult.confidence >= 0.8) {
+            const directAnswer = qaMatchResult.bestAnswer && qaMatchResult.bestAnswer.length > 0
+              ? qaMatchResult.bestAnswer
+              : '[' + qaMatchResult.bestQuestion + ']';
+            console.log(`[DEBUG:queryAI] HIGH-CONFIDENCE Q&A match (${(qaMatchResult.confidence * 100).toFixed(0)}%, ${directAnswer.length} chars) — bypassing AI`);
             markAIResponseSpoken(directAnswer);
             displayResponse(MODELS[startModelKey].name, directAnswer);
             addTranscriptLine(MODELS[startModelKey].name, directAnswer.substring(0, 60) + (directAnswer.length > 60 ? '...' : ''));
